@@ -1,4 +1,5 @@
 import os
+import logging
 from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -8,7 +9,9 @@ from supabase import create_client, Client
 from prompts import (
     THERAPIST_PROMPT,
     RELEVANCE_CHECK_PROMPT,
-    RELEVANCE_CHECK_WITH_CONTEXT
+    RELEVANCE_CHECK_WITH_CONTEXT,
+    WELCOME_MESSAGE,
+    HELP_MESSAGE
 )
 
 # Загружаем переменные окружения из .env файла
@@ -28,6 +31,8 @@ from aiogram.filters.command import Command
 from aiogram import F
 from aiogram.enums import ParseMode
 import asyncio
+from aiogram.types import LabeledPrice
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 # Инициализация ключей API
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -65,7 +70,9 @@ async def load_user_data():
         for user in response.data:
             users[str(user['user_id'])] = {
                 'name': user['name'],
-                'history': user['history']
+                'history': user['history'],
+                'message_count': user['message_count'] or 0,
+                'premium_since': user['premium_since']
             }
         return users
     except Exception as e:
@@ -77,7 +84,8 @@ async def save_user_data(user_id: str, user_data: dict):
         data = {
             'user_id': user_id,
             'name': user_data[user_id]['name'],
-            'history': user_data[user_id]['history']
+            'history': user_data[user_id]['history'],
+            'message_count': user_data[user_id].get('message_count', 0),
         }
         response = supabase.table('users').upsert(data).execute()
         if hasattr(response, 'error') and response.error:
@@ -88,28 +96,120 @@ async def save_user_data(user_id: str, user_data: dict):
 
 @router.message(Command('start'))
 async def start_handler(message: types.Message):
-    user_id = str(message.from_user.id)
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "name": message.from_user.first_name,
-            "history": []
-        }
-        await save_user_data(user_id, user_data)
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="Привет, Mindy!", callback_data="hello_mindy")]
+    ])
     
-    await message.answer("Здравствуйте! Я ваш персональный психолог-терапевт. Как я могу вам помочь сегодня?")
+    user_id = str(message.from_user.id)
+    posthog.capture(
+        distinct_id=user_id,
+        event='start',
+        properties={
+            'username': message.from_user.username,
+            'first_name': message.from_user.first_name,
+        }
+    )
+    
+    await message.answer(
+        WELCOME_MESSAGE,
+        reply_markup=keyboard
+    )
+
+@router.callback_query(F.data == "hello_mindy")
+async def hello_mindy_callback(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.answer(HELP_MESSAGE)
+
+async def update_user_message_count(message: types.Message, user_id: str): 
+    # Увеличиваем счетчик сообщений
+    user_data[user_id]["message_count"] = user_data[user_id].get("message_count", 0) + 1
+    
+    # Отправляем событие в PostHog
+    posthog.capture(
+        distinct_id=user_id,
+        event='message_sent',
+        properties={
+            'message_count': user_data[user_id]["message_count"],
+            'is_premium': user_data[user_id].get("is_premium", False),
+            'username': message.from_user.username,
+            'first_name': message.from_user.first_name,
+        }
+    )
+    
+    await save_user_data(user_id, user_data)
+
+
+async def check_premium_access(message: types.Message, user_id: str) -> bool:
+    PRICE = LabeledPrice(label='5 дополнительных сообщений', amount=10)  # Цена в минимальных единицах валюты (например, 100 XTR)
+
+    """
+    Проверяет доступ пользователя на основе его премиум-статуса.
+    Возвращает True если у пользователя есть доступ, False если нет.
+    """
+    if user_data[user_id].get("message_count", 0) >= 5:
+        # Проверяем, есть ли у пользователя оставшиеся сообщения
+        if user_data[user_id].get("remaining_messages", 0) > 0:
+            return True
+        else:
+            posthog.capture(
+                distinct_id=user_id,
+                event='premium_invoice',
+                properties={
+                    'message_count': user_data[user_id]["message_count"],
+                    'user_id': user_id
+                }
+            )
+                        
+            await bot.send_invoice(
+                chat_id=message.chat.id,
+                title='Покупка дополнительных сообщений',
+                description='Получите еще 5 сообщений для использования с ботом.',
+                payload='start_param_unique_v1',
+                provider_token='',
+                currency='XTR', 
+                prices=[PRICE],
+                start_parameter='get_access',
+                need_name=False,
+                suggested_tip_amounts=[],
+                need_phone_number=False,
+                need_email=False,
+                need_shipping_address=False,
+                is_flexible=False
+            )
+            return False
+    return True
 
 @router.message(F.content_type.in_({'voice', 'audio'}))
 async def handle_audio(message: types.Message):
-    # Отправляем статус "печатает"
-    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     user_id = str(message.from_user.id)
+    
     # Проверяем существование пользователя
     if user_id not in user_data:
         user_data[user_id] = {
             "name": message.from_user.first_name,
-            "history": []
+            "history": [],
+            "message_count": 0,
+            "is_premium": False
         }
-        await save_user_data(user_id, user_data)
+
+    posthog.capture(
+        distinct_id=user_id,
+        event='message_sent',
+        properties={
+            'message_count': user_data[user_id]["message_count"],
+            'is_premium': user_data[user_id].get("is_premium", False),
+            'username': message.from_user.username,
+            'first_name': message.from_user.first_name,
+        }
+    )
+    
+    # Проверяем премиум доступ
+    if not await check_premium_access(message, user_id):
+        return
+        
+
+    # Отправляем статус "печатает"
+    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     
     # Скачивание аудиофайла
     file_id = message.voice.file_id if message.voice else message.audio.file_id
@@ -128,6 +228,7 @@ async def handle_audio(message: types.Message):
                            explanation.replace('no', '').strip())
         return
     
+    update_user_message_count(message, user_id=user_id)
     # Обработка текста через Claude
     response = await process_message(str(message.from_user.id), text)
     await message.answer(response)
@@ -165,26 +266,33 @@ async def is_psychological_query(message: str, user_id: str = None) -> tuple[boo
 
 @router.message(F.content_type == 'text')
 async def handle_text(message: types.Message):
-    # Проверяем релевантность запроса
-    is_relevant, explanation = await is_psychological_query(message.text, str(message.from_user.id))
+    user_id = str(message.from_user.id)
+    
+    # Получаем или инициализируем данные пользователя
+    if user_id not in user_data:
+        user_data[user_id] = {
+            "name": message.from_user.first_name,
+            "history": [],
+            "message_count": 0,
+            "is_premium": False
+        }
+        
+        await save_user_data(user_id, user_data)
+    
+    # Проверяем премиум доступ
+    if not await check_premium_access(message, user_id):
+        return
+    
+    # Существующая логика обработки сообщений...
+    is_relevant, explanation = await is_psychological_query(message.text, user_id)
     if not is_relevant:
         await message.answer("Извините, но я могу помочь только с вопросами, связанными с психологической помощью и ментальным здоровьем. " + 
                            explanation.replace('no', '').strip())
         return
     
-    # Отправляем статус "печатает"
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    response = await process_message(str(message.from_user.id), message.text)
-    # Отправляем событие в PostHog
-    posthog.capture(
-        distinct_id=str(message.from_user.id),
-        event='message_sent',
-        properties={
-            'message_type': 'text',
-            'username': message.from_user.username,
-            'first_name': message.from_user.first_name,
-        }
-    )
+    await update_user_message_count(message, user_id)
+    response = await process_message(user_id, message.text)
     await message.answer(response)
 
 async def process_message(user_id: str, message: str) -> str:
@@ -249,9 +357,23 @@ async def help_handler(message: types.Message):
     """
     await message.answer(help_text)
 
+@router.callback_query(F.data == "send_star")
+async def handle_star_button(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    await callback.answer()
+    
+    # Добавляем 5 сообщений пользователю после отправки Star
+    user_data[user_id]["remaining_messages"] = user_data[user_id].get("remaining_messages", 0) + 5
+    await save_user_data(user_id, user_data)
+    
+    await callback.message.edit_text(
+        "Спасибо за поддержку! Вы получили еще 5 сообщений."
+    )
+
+async def main():
+    global user_data
+    user_data = await load_user_data()
+    await dp.start_polling(bot, skip_updates=True)
+
 if __name__ == '__main__':
-    async def main():
-        global user_data
-        user_data = await load_user_data()
-        await dp.start_polling(bot, skip_updates=True)
     asyncio.run(main()) 
