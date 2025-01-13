@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 from dotenv import load_dotenv
 import warnings
@@ -33,6 +34,13 @@ from aiogram.enums import ParseMode
 import asyncio
 from aiogram.types import LabeledPrice
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout  # Важно для Railway - логи будут видны в консоли
+)
+logger = logging.getLogger(__name__)
 
 # Инициализация ключей API
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -371,9 +379,23 @@ async def handle_star_button(callback: types.CallbackQuery):
     )
 
 async def main():
-    global user_data
-    user_data = await load_user_data()
-    await dp.start_polling(bot, skip_updates=True)
+    try:
+        logger.info("Starting bot...")
+        global user_data
+        
+        logger.info("Loading user data...")
+        user_data = await load_user_data()
+        
+        logger.info("Starting polling...")
+        await dp.start_polling(bot, skip_updates=True)
+    except Exception as e:
+        logger.error(f"Critical error: {e}", exc_info=True)
+        sys.exit(1)
 
 if __name__ == '__main__':
-    asyncio.run(main()) 
+    logger.info("Starting main function...")
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.error(f"Main function error: {e}", exc_info=True)
+        sys.exit(1)
