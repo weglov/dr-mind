@@ -16,6 +16,9 @@ COPY requirements.txt .
 # Устанавливаем зависимости Python
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Предварительно загружаем модель whisper
+RUN python -c "import whisper; whisper.load_model('base')"
+
 # Копируем остальные файлы проекта
 COPY . .
 
