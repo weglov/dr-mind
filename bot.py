@@ -227,7 +227,7 @@ async def handle_audio(message: types.Message):
         logger.info("Начинаем транскрибацию через Whisper")
         try:
            with open(local_file_path, "rb") as audio_file:
-                result = await openAiClient.audio.transcriptions.create(
+                result = openAiClient.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
                 )
