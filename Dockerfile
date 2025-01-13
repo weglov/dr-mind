@@ -7,6 +7,7 @@ WORKDIR /app
 # Устанавливаем системные зависимости
 RUN apt-get update && apt-get install -y \
   ffmpeg \
+  git \
   && rm -rf /var/lib/apt/lists/*
 
 # Копируем файлы зависимостей
