@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+from openai import OpenAI
 from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -20,10 +21,7 @@ load_dotenv()
 
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.fsm.storage.memory import MemoryStorage
-from pathlib import Path
-import whisper
 import anthropic
-import json
 from datetime import datetime
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -49,6 +47,12 @@ POSTHOG_API_KEY = os.getenv('POSTHOG_API_KEY')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 CLAUDE_MODEL = os.getenv('CLAUDE_MODEL')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
+
+openAiClient = OpenAI(
+    api_key=OPENAI_API_KEY,  # This is the default and can be omitted
+)
 
 # Инициализация Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -66,7 +70,6 @@ router = Router()
 dp = Dispatcher(storage=storage)
 dp.include_router(router)
 claude = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-whisper_model = whisper.load_model("base")
 
 # Словарь для хранения данных пользователей
 user_data = {}
@@ -223,7 +226,7 @@ async def handle_audio(message: types.Message):
         # Конвертация аудио в текст с помощью Whisper
         logger.info("Начинаем транскрибацию через Whisper")
         try:
-            result = whisper_model.transcribe(local_file_path)
+            result = await openAiClient.Audio.atranscribe("whisper-1", local_file_path)
             text = result["text"]
             logger.info(f"Успешная транскрибация. Получен текст: {text[:100]}...")
         except Exception as e:
