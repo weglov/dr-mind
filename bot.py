@@ -226,9 +226,13 @@ async def handle_audio(message: types.Message):
         # Конвертация аудио в текст с помощью Whisper
         logger.info("Начинаем транскрибацию через Whisper")
         try:
-            result = await openAiClient.Audio.atranscribe("whisper-1", local_file_path)
-            text = result["text"]
-            logger.info(f"Успешная транскрибация. Получен текст: {text[:100]}...")
+           with open(local_file_path, "rb") as audio_file:
+                result = await openAiClient.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                )
+                text = result.text  # получаем текст из результата
+                logger.info(f"Успешная транскрибация. Получен текст: {text[:100]}...")
         except Exception as e:
             logger.error(f"Ошибка при транскрибации: {str(e)}", exc_info=True)
             await message.answer("Извините, произошла ошибка при обработке аудио. Пожалуйста, попробуйте еще раз или отправьте текстовое сообщение.")
