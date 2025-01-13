@@ -189,60 +189,79 @@ async def check_premium_access(message: types.Message, user_id: str) -> bool:
 
 @router.message(F.content_type.in_({'voice', 'audio'}))
 async def handle_audio(message: types.Message):
-    user_id = str(message.from_user.id)
-    
-    # Проверяем существование пользователя
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "name": message.from_user.first_name,
-            "history": [],
-            "message_count": 0,
-            "is_premium": False
-        }
-
-    posthog.capture(
-        distinct_id=user_id,
-        event='message_sent',
-        properties={
-            'message_count': user_data[user_id]["message_count"],
-            'is_premium': user_data[user_id].get("is_premium", False),
-            'username': message.from_user.username,
-            'first_name': message.from_user.first_name,
-        }
-    )
-    
-    # Проверяем премиум доступ
-    if not await check_premium_access(message, user_id):
-        return
+    try:
+        user_id = str(message.from_user.id)
+        logger.info(f"Получено аудио сообщение от пользователя {user_id}")
         
+        # Проверяем существование пользователя
+        if user_id not in user_data:
+            logger.info(f"Инициализация данных для нового пользователя {user_id}")
+            user_data[user_id] = {
+                "name": message.from_user.first_name,
+                "history": [],
+                "message_count": 0,
+                "is_premium": False
+            }
 
-    # Отправляем статус "печатает"
-    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    
-    # Скачивание аудиофайла
-    file_id = message.voice.file_id if message.voice else message.audio.file_id
-    file = await bot.get_file(file_id)
-    file_path = file.file_path
-    await bot.download_file(file_path, f"audio_{message.from_user.id}.ogg")
-    
-    # Конвертация аудио в текст с помощью Whisper
-    result = whisper_model.transcribe(f"audio_{message.from_user.id}.ogg")
-    text = result["text"]
-    
-    # Проверяем релевантность запроса
-    is_relevant, explanation = await is_psychological_query(text, str(message.from_user.id))
-    if not is_relevant:
-        await message.answer("Извините, но я могу помочь только с вопросами, связанными с психологической помощью и ментальным здоровьем. " + 
-                           explanation.replace('no', '').strip())
-        return
-    
-    update_user_message_count(message, user_id=user_id)
-    # Обработка текста через Claude
-    response = await process_message(str(message.from_user.id), text)
-    await message.answer(response)
-    
-    # Удаление временного файла
-    os.remove(f"audio_{message.from_user.id}.ogg")
+        # Проверяем премиум доступ
+        if not await check_premium_access(message, user_id):
+            logger.info(f"Нет премиум доступа для пользователя {user_id}")
+            return
+
+        # Отправляем статус "печатает"
+        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        
+        # Скачивание аудиофайла
+        logger.info("Начинаем скачивание аудиофайла")
+        file_id = message.voice.file_id if message.voice else message.audio.file_id
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
+        local_file_path = f"audio_{message.from_user.id}.ogg"
+        await bot.download_file(file_path, local_file_path)
+        logger.info(f"Аудиофайл сохранен локально: {local_file_path}")
+        
+        # Конвертация аудио в текст с помощью Whisper
+        logger.info("Начинаем транскрибацию через Whisper")
+        try:
+            result = whisper_model.transcribe(local_file_path)
+            text = result["text"]
+            logger.info(f"Успешная транскрибация. Получен текст: {text[:100]}...")
+        except Exception as e:
+            logger.error(f"Ошибка при транскрибации: {str(e)}", exc_info=True)
+            await message.answer("Извините, произошла ошибка при обработке аудио. Пожалуйста, попробуйте еще раз или отправьте текстовое сообщение.")
+            return
+        
+        # Проверяем релевантность запроса
+        logger.info("Проверяем релевантность запроса")
+        is_relevant, explanation = await is_psychological_query(text, str(message.from_user.id))
+        if not is_relevant:
+            logger.info(f"Запрос нерелевантен: {explanation}")
+            await message.answer("Извините, но я могу помочь только с вопросами, связанными с психологической помощью и ментальным здоровьем. " + 
+                               explanation.replace('no', '').strip())
+            return
+        
+        # Обработка текста через Claude
+        logger.info("Отправляем запрос в Claude")
+        response = await process_message(str(message.from_user.id), text)
+        await message.answer(response)
+        
+        # Удаление временного файла
+        try:
+            os.remove(local_file_path)
+            logger.info(f"Временный файл {local_file_path} удален")
+        except Exception as e:
+            logger.error(f"Ошибка при удалении временного файла: {str(e)}")
+            
+    except Exception as e:
+        logger.error(f"Общая ошибка в handle_audio: {str(e)}", exc_info=True)
+        await message.answer("Произошла ошибка при обработке аудио сообщения. Пожалуйста, попробуйте позже.")
+    finally:
+        # Попытка удалить временный файл в любом случае
+        try:
+            if 'local_file_path' in locals():
+                os.remove(local_file_path)
+        except:
+            pass
 
 async def is_psychological_query(message: str, user_id: str = None) -> tuple[bool, str]:
     # Если есть user_id, получаем историю диалога
