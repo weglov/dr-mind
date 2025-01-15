@@ -2,9 +2,9 @@
 PRICING_PLANS = {
     'basic': {
         'messages': 10,
-        'stars': 10,
+        'stars': 100,
         'price_usd': 3,
-        'button_text': "10 сообщений - 100 звёзд",
+        'button_text': "10 сообщений - 100 🌟",
         'callback_data': "buy_10",
         'invoice_title': "10 дополнительных сообщений",
         'invoice_description': "Получи 10 сообщений для общения с Mindy",
@@ -12,18 +12,18 @@ PRICING_PLANS = {
     },
     'premium': {
         'messages': 50,
-        'stars': 30,
+        'stars': 300,
         'price_usd': 9,
-        'button_text': "50 сообщений - 300 звёзд",
+        'button_text': "50 сообщений - 300 🌟",
         'callback_data': "buy_50",
         'invoice_title': "50 дополнительных сообщений",
         'invoice_description': "Получи 50 сообщений для общения с Mindy",
         'label': "50 сообщений"
     },
     'unlimited': {
-        'stars': 50,
+        'stars': 1000,
         'price_usd': 15,
-        'button_text': "Безлимитный доступ - 500 звёзд",
+        'button_text': "Безлимитный доступ - 1000 🌟",
         'callback_data': "buy_unlimited",
         'invoice_title': "Безлимитный доступ к Mindy",
         'invoice_description': "Получи неограниченный доступ к психологической поддержке 24/7",
@@ -33,8 +33,6 @@ PRICING_PLANS = {
 
 # Текст сообщения о покупке
 PURCHASE_MESSAGE = """
-Привет! Я вижу, что у тебя закончились сообщения 😊
-
 Чтобы продолжать получать психологическую поддержку 24/7, ты можешь:
 
 • Купить {basic_messages} сообщений за {basic_stars} звёзд (≈ {basic_price_usd}$)
@@ -90,3 +88,6 @@ BALANCE_STATUS_MESSAGES = {
     'good': "✨ Отличный запас сообщений! Продолжай общаться.",
     'unlimited': "🌟 У тебя безлимитный доступ - можешь общаться сколько угодно!"
 }
+
+# Количество бесплатных сообщений для новых пользователей
+FREE_MESSAGES = 5

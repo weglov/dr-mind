@@ -14,7 +14,8 @@ from config import (
     WELCOME_MESSAGE,
     HELP_MESSAGE,
     BALANCE_MESSAGE,
-    BALANCE_STATUS_MESSAGES
+    BALANCE_STATUS_MESSAGES,
+    FREE_MESSAGES
 )
 from base64 import b64encode
 from typing import BinaryIO
@@ -203,7 +204,7 @@ async def check_premium_access(message: types.Message, user_id: str) -> bool:
     except Exception as e:
         logger.error(f"Ошибка при перепроверке данных: {str(e)}")
         actual_message_count = user_data[user_id].get("message_count", 0)
-        message_limit = user_data[user_id].get("message_limit", 5)
+        message_limit = 5
 
     if actual_message_count >= message_limit:
         posthog.capture(
@@ -230,6 +231,19 @@ async def check_premium_access(message: types.Message, user_id: str) -> bool:
                 callback_data=PRICING_PLANS['unlimited']['callback_data']
             )]
         ])
+
+        is_free = message_limit == 5  # Базовый лимит = бесплатные сообщения
+
+        if is_free:
+            await message.answer("🌟 Привет! Твои бесплатные сообщения закончились, но не переживай!\n\n"
+                               "Чтобы продолжить наше общение, ты можешь выбрать один из удобных пакетов сообщений. "
+                               "Я буду очень рада продолжить помогать тебе! 💫\n\n"
+                               "Выбери подходящий вариант ниже 👇")
+        else:
+            await message.answer("🌟 Привет! У тебя закончились сообщения в текущем пакете.\n\n"
+                               "Чтобы продолжить наше общение, ты можешь приобрести дополнительные сообщения. "
+                               "Я буду рада продолжить помогать тебе! 💫\n\n"
+                               "Выбери подходящий вариант ниже 👇")
         
         await message.answer(
             PURCHASE_MESSAGE.format(
@@ -310,7 +324,7 @@ async def handle_audio(message: types.Message):
                 "name": message.from_user.first_name,
                 "history": [],
                 "message_count": 0,
-                "message_limit": 5
+                "message_limit": FREE_MESSAGES
             }
 
         # Проверяем премиум доступ
@@ -444,7 +458,7 @@ async def handle_text(message: types.Message):
             "name": message.from_user.first_name,
             "history": [],
             "message_count": 0,
-            "message_limit": 5
+            "message_limit": FREE_MESSAGES
         }
         
         await save_user_data(user_id, user_data)
