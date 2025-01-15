@@ -143,7 +143,10 @@ async def start_handler(message: types.Message):
 @router.callback_query(F.data == "hello_mindy")
 async def hello_mindy_callback(callback: types.CallbackQuery):
     await callback.answer()
-    await callback.message.answer(HELP_MESSAGE)
+
+
+    await callback.message.answer(HELP_MESSAGE, parse_mode=ParseMode.MARKDOWN,
+        disable_web_page_preview=True)
 
 async def update_user_message_count(message: types.Message, user_id: str): 
     # Определяем тип сообщения
@@ -258,7 +261,9 @@ async def check_premium_access(message: types.Message, user_id: str) -> bool:
                 unlimited_stars=PRICING_PLANS['unlimited']['stars'],
                 unlimited_price_usd=PRICING_PLANS['unlimited']['price_usd']
             ),
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=True
         )
         return False
     return True
@@ -596,10 +601,7 @@ async def help_handler(message: types.Message):
 • Изображения документом 📄
 • Видео-кружки 🎥
 
-💫 *Дополнительно:*
-• Можно отправлять сообщения с подписью
-• Поддерживаются длинные голосовые сообщения
-• Работаю с изображениями в высоком качестве
+Что-то не работает? Обратитесь к нашему боту поддержки: @useSomethingBot
     """
     await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
 
@@ -808,7 +810,9 @@ async def buy_handler(message: types.Message):
             unlimited_stars=PRICING_PLANS['unlimited']['stars'],
             unlimited_price_usd=PRICING_PLANS['unlimited']['price_usd']
         ),
-        reply_markup=keyboard
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN,
+        disable_web_page_preview=True
     )
     
     # Логируем открытие меню покупки
