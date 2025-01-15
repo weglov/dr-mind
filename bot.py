@@ -135,7 +135,9 @@ async def start_handler(message: types.Message):
     
     await message.answer(
         WELCOME_MESSAGE,
-        reply_markup=keyboard
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN,
+        disable_web_page_preview=True
     )
 
 @router.callback_query(F.data == "hello_mindy")
