@@ -392,7 +392,22 @@ async def handle_audio(message: types.Message):
         logger.info("Проверяем релевантность запроса")
         is_relevant, explanation = await is_psychological_query(text, str(message.from_user.id))
         if not is_relevant:
-            logger.info(f"Запрос нерелевантен: {explanation}")
+            # Логируем нерелевантный запрос
+            posthog.capture(
+                distinct_id=user_id,
+                event='irrelevant_message',
+                properties={
+                    'message_text': text,
+                    'message_type': message_type,
+                    'explanation': explanation,
+                    'username': message.from_user.username,
+                    'first_name': message.from_user.first_name,
+                    'message_count': user_data[user_id].get("message_count", 0),
+                    'message_limit': user_data[user_id].get("message_limit", 5)
+                }
+            )
+            logger.info(f"Нерелевантный аудио запрос от пользователя {user_id}: {text} | Объяснение: {explanation}")
+            
             await message.answer("Извините, но я могу помочь только с вопросами, связанными с психологической помощью и ментальным здоровьем. " + 
                                explanation.replace('no', '').strip())
             return
@@ -482,6 +497,21 @@ async def handle_text(message: types.Message):
     # Существующая логика обработки сообщений...
     is_relevant, explanation = await is_psychological_query(message.text, user_id)
     if not is_relevant:
+        # Логируем нерелевантный запрос
+        posthog.capture(
+            distinct_id=user_id,
+            event='irrelevant_message',
+            properties={
+                'message_text': message.text,
+                'explanation': explanation,
+                'username': message.from_user.username,
+                'first_name': message.from_user.first_name,
+                'message_count': user_data[user_id].get("message_count", 0),
+                'message_limit': user_data[user_id].get("message_limit", 5)
+            }
+        )
+        logger.info(f"Нерелевантный запрос от пользователя {user_id}: {message.text} | Объяснение: {explanation}")
+        
         await message.answer("Извините, но я могу помочь только с вопросами, связанными с психологической помощью и ментальным здоровьем. " + 
                            explanation.replace('no', '').strip())
         return
