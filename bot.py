@@ -117,6 +117,17 @@ async def save_user_data(user_id: str, user_data: dict):
         print(f"Error saving user data: {str(e)}")
         print(f"Data attempted to save: {data}")
 
+async def initialize_user_data(user_id: str, first_name: str) -> None:
+    """Инициализация данных пользователя если их нет"""
+    if user_id not in user_data:
+        user_data[user_id] = {
+            "name": first_name,
+            "history": [],
+            "message_count": 0,
+            "message_limit": FREE_MESSAGES
+        }
+        await save_user_data(user_id, user_data)
+
 @router.message(Command('start'))
 async def start_handler(message: types.Message):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
@@ -124,6 +135,10 @@ async def start_handler(message: types.Message):
     ])
     
     user_id = str(message.from_user.id)
+    
+    # Инициализация данных пользователя
+    await initialize_user_data(user_id, message.from_user.first_name)
+    
     posthog.capture(
         distinct_id=user_id,
         event='start',
@@ -307,6 +322,9 @@ async def handle_audio(message: types.Message):
     try:
         user_id = str(message.from_user.id)
         
+        # Инициализация данных пользователя
+        await initialize_user_data(user_id, message.from_user.first_name)
+        
         # Определяем тип сообщения
         message_type = 'voice' if message.voice else ('audio' if message.audio else 'video_note')
         logger.info(f"Получено {message_type} сообщение от пользователя {user_id}")
@@ -323,16 +341,6 @@ async def handle_audio(message: types.Message):
                 'message_limit': user_data[user_id].get("message_limit", 5)
             }
         )
-        
-        # Проверяем существование пользователя
-        if user_id not in user_data:
-            logger.info(f"Инициализация данных для нового пользователя {user_id}")
-            user_data[user_id] = {
-                "name": message.from_user.first_name,
-                "history": [],
-                "message_count": 0,
-                "message_limit": FREE_MESSAGES
-            }
 
         # Проверяем премиум доступ
         if not await check_premium_access(message, user_id):
@@ -445,6 +453,9 @@ async def is_psychological_query(message: str, user_id: str = None) -> tuple[boo
 async def handle_text(message: types.Message):
     user_id = str(message.from_user.id)
     
+    # Инициализация данных пользователя
+    await initialize_user_data(user_id, message.from_user.first_name)
+    
     # Логируем получение текстового сообщения
     posthog.capture(
         distinct_id=user_id,
@@ -458,17 +469,6 @@ async def handle_text(message: types.Message):
             'message_length': len(message.text)
         }
     )
-    
-    # Получаем или инициализируем данные пользователя
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "name": message.from_user.first_name,
-            "history": [],
-            "message_count": 0,
-            "message_limit": FREE_MESSAGES
-        }
-        
-        await save_user_data(user_id, user_data)
     
     # Проверяем премиум доступ
     if not await check_premium_access(message, user_id):
