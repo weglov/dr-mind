@@ -1,7 +1,7 @@
 # Тарифные планы
 PRICING_PLANS = {
     'basic': {
-        'messages': 10,
+        'messages': 30,
         'stars': 100,
         'price_usd': 3,
         'button_text': "10 сообщений - 100 🌟",
@@ -11,7 +11,7 @@ PRICING_PLANS = {
         'label': "10 сообщений"
     },
     'premium': {
-        'messages': 50,
+        'messages': 100,
         'stars': 300,
         'price_usd': 9,
         'button_text': "50 сообщений - 300 🌟",
@@ -99,4 +99,4 @@ BALANCE_STATUS_MESSAGES = {
 }
 
 # Количество бесплатных сообщений для новых пользователей
-FREE_MESSAGES = 5
+FREE_MESSAGES = 30

@@ -664,7 +664,7 @@ async def successful_payment(message: types.Message):
         
         # Получаем текущий лимит из базы
         response = supabase.table('users').select('message_limit').eq('user_id', user_id).single().execute()
-        current_limit = response.data.get('message_limit', 5) if response.data else 5
+        current_limit = response.data.get('message_limit', 30) if response.data else 5
         
         # Определяем новый лимит в зависимости от плана
         if plan_type == 'basic':

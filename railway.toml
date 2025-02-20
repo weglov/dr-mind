@@ -7,6 +7,3 @@ startCommand = "python bot.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
-[[cron]]
-schedule = "0 19 * * 3"
-command = "python weekly_messages.py"
