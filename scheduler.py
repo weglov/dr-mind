@@ -20,6 +20,15 @@ WEEKLY_MESSAGES = [
     "Не забывай заботиться о себе! 🌺"
 ]
 
+# Список стикеров для рассылки
+STICKER_IDS = [
+    "AAMCAgADGQEAAgLVZ7g5nT8Kc5GhyjhVDCRCTDns8TwAApQYAAL3W4BIzxj8fupFV64BAAdtAAM2BA",  # Cute cat
+    "AAMCAgADGQEAAgLXZ7g50IfihU71O9pqBFV2CwjDmhsAAt4ZAAK1y5hLPzilJtt0YuwBAAdtAAM2BA",  # Happy fox
+    "AAMCBAADGQEAAgLZZ7g6AmXWYL_29dXmVRlQbcwzXZ4AAiIdAAJRfQABUG82Yd1QWKOlAQAHbQADNgQ",  # Lovely panda
+    "AAMCBAADGQEAAgLbZ7g6Hfd-9QozTogyNLM0B9F0jfwAAlcXAALSWUBTlx9DwsBgtW0BAAdtAAM2BA",  # Cheerful dog
+    "AAMCBAADGQEAAgLbZ7g6Hfd-9QozTogyNLM0B9F0jfwAAlcXAALSWUBTlx9DwsBgtW0BAAdtAAM2BA"   # Sweet bunny
+]
+
 async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
     try:
         logger.info("Начинаем еженедельную рассылку сообщений...")
@@ -30,12 +39,20 @@ async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
         successful_sends = 0
         failed_sends = 0
         
-        # Отправляем случайное сообщение каждому пользователю
+        # Отправляем случайное сообщение и стикер каждому пользователю
         for user in users:
             try:
                 message = random.choice(WEEKLY_MESSAGES)
+                sticker_id = random.choice(STICKER_IDS)
+                
+                # Отправляем стикер
+                await bot.send_sticker(chat_id=user[0], sticker=sticker_id)
+                await asyncio.sleep(0.1)  # Небольшая задержка между отправками
+                
+                # Отправляем сообщение
                 await bot.send_message(chat_id=user[0], text=message)
                 await asyncio.sleep(0.1)  # Небольшая задержка между отправками
+                
                 successful_sends += 1
                 
                 # Отправляем событие в PostHog
@@ -44,6 +61,7 @@ async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
                     event='weekly_message_sent',
                     properties={
                         'message': message,
+                        'sticker_id': sticker_id,
                         'status': 'success'
                     }
                 )
