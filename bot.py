@@ -41,6 +41,7 @@ from aiogram.enums import ParseMode
 import asyncio
 from aiogram.types import LabeledPrice
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from scheduler import setup_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -939,8 +940,18 @@ async def main():
         logger.info("Loading user data...")
         user_data = await load_user_data()
         
+        # Настраиваем планировщик
+        logger.info("Setting up scheduler...")
+        scheduler = setup_scheduler(bot, supabase, posthog)
+        
         logger.info("Starting polling...")
-        await dp.start_polling(bot, skip_updates=True)
+        try:
+            await dp.start_polling(bot, skip_updates=True)
+        finally:
+            logger.info("Shutting down scheduler...")
+            scheduler.shutdown()
+            await bot.session.close()
+            
     except Exception as e:
         logger.error(f"Critical error: {e}", exc_info=True)
         sys.exit(1)
