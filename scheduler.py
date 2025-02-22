@@ -15,8 +15,7 @@ WEEKLY_MESSAGES = [
     "Привет, как ты? 🌟",
     "Привет, как прошла неделя? 📅",
     "Привет, как ты там? 🌈",
-    "Надеюсь, у тебя всё хорошо! ❤️",
-    "Надеюсь, у тебя всё хорошо! ❤️",
+    "Привет, Надеюсь, у тебя всё хорошо! ❤️",
     "Не забывай заботиться о себе! 🌺",
     "Вы имеете право, но не имеете лево",
     "Если я вдруг стану тебе нужен, то я там же, где и был, когда был не нужен."
@@ -24,11 +23,15 @@ WEEKLY_MESSAGES = [
 
 # Список стикеров для рассылки
 STICKER_IDS = [
-    "AAMCAgADGQEAAgLVZ7g5nT8Kc5GhyjhVDCRCTDns8TwAApQYAAL3W4BIzxj8fupFV64BAAdtAAM2BA",  # Cute cat
-    "AAMCAgADGQEAAgLXZ7g50IfihU71O9pqBFV2CwjDmhsAAt4ZAAK1y5hLPzilJtt0YuwBAAdtAAM2BA",  # Happy fox
-    "AAMCBAADGQEAAgLZZ7g6AmXWYL_29dXmVRlQbcwzXZ4AAiIdAAJRfQABUG82Yd1QWKOlAQAHbQADNgQ",  # Lovely panda
-    "AAMCBAADGQEAAgLbZ7g6Hfd-9QozTogyNLM0B9F0jfwAAlcXAALSWUBTlx9DwsBgtW0BAAdtAAM2BA",  # Cheerful dog
-    "AAMCBAADGQEAAgLbZ7g6Hfd-9QozTogyNLM0B9F0jfwAAlcXAALSWUBTlx9DwsBgtW0BAAdtAAM2BA"   # Sweet bunny
+    "CAACAgIAAxkBAAEM1Cdnug3_A9foIEifK7S9itGrD6Mb8AACbgUAAj-VzAqGOtldiLy3NTYE",
+    "CAACAgIAAxkBAAEM1C1nug48u60e7B2FIvSYqAE5zo486gACjgYAAvpRRgyWGTCDhkMr4DYE",
+    "CAACAgIAAxkBAAEM1Ctnug44D5lryaN2pW27Vu87T7t4yQACCiYAAgPBeUjcZzJU8Ge0tzYE",
+    "CAACAgIAAxkBAAEM1Clnug41CBV_N651cNAEixoTNaKM1wAClBgAAvdbgEjPGPx-6kVXrjYE",
+    "CAACAgQAAxkBAAEM1C9nug5p5ZsrjjqdpsXnUDPb3I6arwAC2BQAAuiWMFKeUXzNBIgNGzYE",
+    "CAACAgQAAxkBAAEM1DFnug56hiAAAacFk0Dg_7bEgO3ziNEAApMUAAKT-TBQTP9P0XAxl-I2BA",
+    "CAACAgIAAxkBAAEM1DNnug6MjJ1irrHgAAHU4LLD9Y_n2CcAAnUaAAKQEIlKRjLKTmhNvCE2BA",
+    "CAACAgQAAxkBAAEM1Ddnug6lNoe6Qz3JGfYrng9HbnxzVQACVxcAAtJZQFOXH0PCwGC1bTYE",
+    "CAACAgQAAxkBAAEM1D9nug8Twpn2CAijRj6EHYPOmFCrSgACGxEAAnu7gFDZ_ClKKc1VZTYE"
 ]
 
 async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
@@ -90,7 +93,7 @@ def setup_scheduler(bot: Bot, supabase: Client, posthog: Posthog):
     scheduler.add_job(
         send_weekly_messages,
         trigger=CronTrigger(
-            day_of_week='fri',  # Пятница
+            day_of_week='tue',  # Пятница
             hour=19,           # 19:00
             minute=0,
             timezone="Europe/Moscow"
@@ -105,3 +108,4 @@ def setup_scheduler(bot: Bot, supabase: Client, posthog: Posthog):
     logger.info(f"Планировщик запущен. Следующая рассылка запланирована на: {next_run}")
     
     return scheduler 
+
