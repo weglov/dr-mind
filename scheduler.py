@@ -93,8 +93,8 @@ def setup_scheduler(bot: Bot, supabase: Client, posthog: Posthog):
     scheduler.add_job(
         send_weekly_messages,
         trigger=CronTrigger(
-            day_of_week='tue',  # Пятница
-            hour=19,           # 19:00
+            day_of_week='fri',  # Пятница
+            hour=20,           # 19:00
             minute=0,
             timezone="Europe/Moscow"
         ),
