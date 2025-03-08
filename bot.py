@@ -445,6 +445,8 @@ async def is_psychological_query(message: str, user_id: str = None) -> tuple[boo
             f"User: {msg['user']}\nAssistant: {msg['assistant']}"
             for msg in last_messages
         ])
+
+    logger.info(context)
     
     # Проверяем релевантность запроса через Claude
     response = claude.messages.create(

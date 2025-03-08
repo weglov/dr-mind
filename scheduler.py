@@ -53,7 +53,6 @@ async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
                 
                 logger.info(user_id)
 
-                    
                 user_history = user[1] or []
                 
                 message = random.choice(WEEKLY_MESSAGES)
@@ -122,9 +121,9 @@ def setup_scheduler(bot: Bot, supabase: Client, posthog: Posthog):
     scheduler.add_job(
         send_weekly_messages,
         trigger=CronTrigger(
-            day_of_week='sat',  # Пятница
-            hour=16,           # 19:00
-            minute=43,
+            day_of_week='fri',  # Пятница
+            hour=20,           # 19:00
+            minute=00,
             timezone="Europe/Moscow"
         ),
         id='weekly_messages',
