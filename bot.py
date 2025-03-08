@@ -584,15 +584,25 @@ async def process_message(user_id: str, message: str) -> str:
         system_prompt += f"\n\nКраткое резюме о пользователе:\n{user_summary}"
     
     # Формируем массив сообщений из истории
-    messages = []
+    formatted_messages = []
     # Добавляем последние 10 сообщений из истории для контекста
     for h in user_history[-10:]:
-        messages.extend([
-            {"role": "user", "content": h["user"]},
-            {"role": "assistant", "content": h["assistant"]}
-        ])
+        if h.get('user'):
+            formatted_messages.append({
+                "role": "user",
+                "content": [{"type": "text", "text": h["user"]}]
+            })
+        if h.get('assistant'):
+            formatted_messages.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": h["assistant"]}]
+            })
+    
     # Добавляем текущее сообщение
-    messages.append({"role": "user", "content": message})
+    formatted_messages.append({
+        "role": "user",
+        "content": [{"type": "text", "text": message}]
+    })
     
     # Получение ответа от Claude
     response = claude.messages.create(
@@ -600,7 +610,7 @@ async def process_message(user_id: str, message: str) -> str:
         max_tokens=1024,
         temperature=0.7,
         system=system_prompt,
-        messages=messages
+        messages=formatted_messages
     )
     
     response_text = response.content[0].text if isinstance(response.content, list) else response.content

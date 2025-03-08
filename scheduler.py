@@ -10,16 +10,18 @@ from apscheduler.triggers.cron import CronTrigger
 logger = logging.getLogger(__name__)
 
 # Список фраз для рассылки
-WEEKLY_MESSAGES = [
-    "Привет, как дела? 😊",
-    "Привет, как ты? 🌟",
-    "Привет, как прошла неделя? 📅",
-    "Привет, как ты там? 🌈",
-    "Привет, Надеюсь, у тебя всё хорошо! ❤️",
-    "Не забывай заботиться о себе! 🌺",
-    "Вы имеете право, но не имеете лево",
-    "Если я вдруг стану тебе нужен, то я там же, где и был, когда был не нужен."
+WEEKLY_MESSAGES = messages = [
+    "Привет! 😊 Как твоё настроение сегодня? Если захочешь поговорить — я здесь.",
+    "Привет! На связи Минди 🌟 Надеюсь, сегодня у тебя найдётся время на приятные мелочи!",
+    "Привет! 📅 Как прошла твоя неделя? Буду рада послушать, если захочешь поделиться.",
+    "Как ты там? 🌈 Если нужна поддержка или просто разговор по душам — обращайся!",
+    "Надеюсь, у тебя всё хорошо ❤️ Помни, ты всегда можешь обратиться ко мне за советом или поддержкой.",
+    "Это Минди 🌺 Напоминаю о важности заботы о себе: отдых и хорошие эмоции нужны каждому.",
+    "Просто хочу сказать, что верю в тебя ❤️ Если захочется обсудить что-то важное — я рядом!",
+    "Пусть твой день будет спокойным и светлым ☀️ Я здесь, если захочешь поговорить!",
+    "Думаю о тебе и надеюсь, что твой день полон хороших моментов 😊"
 ]
+
 
 # Список стикеров для рассылки
 STICKER_IDS = [
@@ -38,8 +40,8 @@ async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
     try:
         logger.info("Начинаем еженедельную рассылку сообщений...")
         # Получаем всех пользователей из базы данных
-        response = supabase.table('users').select('user_id').execute()
-        users = [(user['user_id'],) for user in response.data]
+        response = supabase.table('users').select('user_id, history').execute()
+        users = [(user['user_id'], user.get('history')) for user in response.data]
         
         successful_sends = 0
         failed_sends = 0
@@ -47,22 +49,49 @@ async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
         # Отправляем случайное сообщение и стикер каждому пользователю
         for user in users:
             try:
+                user_id = user[0]
+                
+                logger.info(user_id)
+
+                    
+                user_history = user[1] or []
+                
                 message = random.choice(WEEKLY_MESSAGES)
                 sticker_id = random.choice(STICKER_IDS)
                 
                 # Отправляем стикер
-                await bot.send_sticker(chat_id=user[0], sticker=sticker_id)
+                await bot.send_sticker(chat_id=user_id, sticker=sticker_id)
                 await asyncio.sleep(0.1)  # Небольшая задержка между отправками
                 
                 # Отправляем сообщение
-                await bot.send_message(chat_id=user[0], text=message)
+                await bot.send_message(chat_id=user_id, text=message)
                 await asyncio.sleep(0.1)  # Небольшая задержка между отправками
+                
+                # Создаем новое сообщение
+                new_message = {
+                    'user': "",  # Так как это сообщение от бота, поле user будет None
+                    'assistant': message,
+                    'type': 'weekly_message'
+                }
+                
+                # Проверяем последнее сообщение в истории
+                if user_history and user_history[-1].get('type') == 'weekly_message':
+                    # Если последнее сообщение еженедельное - заменяем его
+                    user_history[-1] = new_message
+                    logger.info(f"Обновлено последнее еженедельное сообщение для пользователя {user_id}")
+                else:
+                    # Если последнее сообщение не еженедельное - добавляем новое
+                    user_history.append(new_message)
+                    logger.info(f"Добавлено новое еженедельное сообщение для пользователя {user_id}")
+                
+                # Обновляем историю в базе данных
+                supabase.table('users').update({'history': user_history}).eq('user_id', user_id).execute()
                 
                 successful_sends += 1
                 
                 # Отправляем событие в PostHog
                 posthog.capture(
-                    distinct_id=str(user[0]),
+                    distinct_id=str(user_id),
                     event='weekly_message_sent',
                     properties={
                         'message': message,
@@ -72,9 +101,9 @@ async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
                 )
             except Exception as e:
                 failed_sends += 1
-                logger.error(f"Ошибка при отправке еженедельного сообщения пользователю {user[0]}: {e}")
+                logger.error(f"Ошибка при отправке еженедельного сообщения пользователю {user_id}: {e}")
                 posthog.capture(
-                    distinct_id=str(user[0]),
+                    distinct_id=str(user_id),
                     event='weekly_message_failed',
                     properties={
                         'error': str(e)
@@ -93,9 +122,9 @@ def setup_scheduler(bot: Bot, supabase: Client, posthog: Posthog):
     scheduler.add_job(
         send_weekly_messages,
         trigger=CronTrigger(
-            day_of_week='fri',  # Пятница
-            hour=20,           # 19:00
-            minute=0,
+            day_of_week='sat',  # Пятница
+            hour=16,           # 19:00
+            minute=43,
             timezone="Europe/Moscow"
         ),
         id='weekly_messages',
