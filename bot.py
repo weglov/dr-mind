@@ -1111,6 +1111,31 @@ async def admin_panel(message: types.Message):
         reply_markup=keyboard,
                        parse_mode=ParseMode.MARKDOWN)
 
+# Добавляем команду для быстрого выхода из админ-режима
+# Используем больший приоритет для этой команды, чтобы она перехватывалась в любом состоянии
+@router.message(Command('adminstop'), flags={"always_allow": True})
+async def admin_stop_handler(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды для быстрого выхода из административного режима
+    Сбрасывает текущее состояние FSM
+    Работает из любого состояния с высоким приоритетом
+    """
+    user_id = str(message.from_user.id)
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id not in ADMIN_IDS:
+        await message.answer("У вас нет доступа к этой команде.")
+        return
+    
+    # Получаем текущее состояние
+    current_state = await state.get_state()
+    
+    # Сбрасываем состояние
+    await state.clear()
+    
+    logger.info(f"Администратор {user_id} вышел из состояния {current_state} с помощью команды /adminstop")
+    await message.answer("✅ Админ-режим остановлен. Текущее состояние сброшено.")
+
 @router.callback_query(F.data == "send_notification")
 async def admin_notification(callback: types.CallbackQuery, state: FSMContext):
     """Обработчик для отправки уведомления всем пользователям"""
@@ -1335,6 +1360,9 @@ async def send_bulk_notification(notification_text: str, admin_user_id: int, sen
                 chat_id=admin_user_id,
                 text="⚠️ Нет пользователей для отправки уведомлений."
             )
+            # Сбрасываем состояние администратора
+            state = dp.fsm.get_context(bot, admin_user_id, chat_id=admin_user_id)
+            await state.clear()
             return
             
         users = [user["user_id"] for user in response.data]
@@ -1371,8 +1399,8 @@ async def send_bulk_notification(notification_text: str, admin_user_id: int, sen
                         await bot.send_message(
                             chat_id=int(user_id),
                             text=notification_text,
-                parse_mode=ParseMode.MARKDOWN
-            )
+                            parse_mode=ParseMode.MARKDOWN
+                        )
                     except Exception as e:
                         logger.error(f"Ошибка при отправке текстового уведомления пользователю {user_id}: {e}")
                         # Пробуем отправить без Markdown, если была ошибка форматирования
@@ -1442,6 +1470,11 @@ async def send_bulk_notification(notification_text: str, admin_user_id: int, sen
                  f"❌ Ошибки: {error_count}"
         )
         
+        # Сбрасываем состояние администратора после завершения рассылки
+        state = dp.fsm.get_context(bot, admin_user_id, chat_id=admin_user_id)
+        await state.clear()
+        logger.info(f"Состояние администратора {admin_user_id} сброшено после завершения рассылки")
+        
         # Логируем результат в PostHog
         posthog.capture(
             distinct_id=str(admin_user_id),
@@ -1462,6 +1495,14 @@ async def send_bulk_notification(notification_text: str, admin_user_id: int, sen
             chat_id=admin_user_id,
             text=f"❌ Произошла ошибка при выполнении массовой рассылки: {str(e)}"
         )
+        
+        # Сбрасываем состояние администратора в случае ошибки
+        try:
+            state = dp.fsm.get_context(bot, admin_user_id, chat_id=admin_user_id)
+            await state.clear()
+            logger.info(f"Состояние администратора {admin_user_id} сброшено после ошибки рассылки")
+        except Exception as clear_error:
+            logger.error(f"Ошибка при сбросе состояния: {clear_error}")
 
 async def main():
     try:
@@ -1489,7 +1530,8 @@ async def main():
         
         # Дополнительные команды для администраторов
         admin_commands = base_commands + [
-            types.BotCommand(command="admin", description="Панель администратора")
+            types.BotCommand(command="admin", description="Панель администратора"),
+            types.BotCommand(command="adminstop", description="Выйти из админ-режима")
         ]
         
         # Устанавливаем админские команды только для администраторов
@@ -1543,3 +1585,36 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Main function error: {e}", exc_info=True)
         sys.exit(1)
+
+# Также добавим обработчики для конкретных состояний, чтобы гарантировать обработку
+@router.message(Command('adminstop'), AdminState.waiting_for_notification_text)
+async def admin_stop_handler_notification_text(message: types.Message, state: FSMContext):
+    """Выход из режима ожидания текста уведомления"""
+    user_id = str(message.from_user.id)
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id not in ADMIN_IDS:
+        await message.answer("У вас нет доступа к этой команде.")
+        return
+    
+    # Сбрасываем состояние
+    await state.clear()
+    
+    logger.info(f"Администратор {user_id} вышел из состояния ожидания текста уведомления")
+    await message.answer("✅ Режим создания уведомления остановлен. Состояние сброшено.")
+
+@router.message(Command('adminstop'), AdminState.confirm_notification)
+async def admin_stop_handler_confirm_notification(message: types.Message, state: FSMContext):
+    """Выход из режима подтверждения уведомления"""
+    user_id = str(message.from_user.id)
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id not in ADMIN_IDS:
+        await message.answer("У вас нет доступа к этой команде.")
+        return
+    
+    # Сбрасываем состояние
+    await state.clear()
+    
+    logger.info(f"Администратор {user_id} вышел из состояния подтверждения уведомления")
+    await message.answer("✅ Создание уведомления отменено. Состояние сброшено.")
