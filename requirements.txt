@@ -4,5 +4,5 @@ python-dotenv==1.0.1
 posthog==3.7.5
 supabase==2.11.0
 python-telegram-bot>=20.0 
-openai
+openai>=1.68.0
 APScheduler==3.10.4

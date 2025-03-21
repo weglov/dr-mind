@@ -1,7 +1,7 @@
 import os
 import sys
 import logging
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -28,6 +28,25 @@ from prompts import (
 # Загружаем переменные окружения из .env файла
 load_dotenv()
 
+# Инициализация ключей API
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+CLAUDE_API_KEY = os.getenv('CLAUDE_API_KEY')
+POSTHOG_API_KEY = os.getenv('POSTHOG_API_KEY')
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+CLAUDE_MODEL = os.getenv('CLAUDE_MODEL')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+TTS_MODEL = os.getenv('TTS_MODEL', 'gpt-4o-mini-tts')  # Используем gpt-4o-mini-tts по умолчанию
+
+# Получаем и обрабатываем список ID администраторов из переменных окружения
+admin_ids_env = os.getenv('ADMIN_IDS', '')
+ADMIN_IDS = [admin_id.strip() for admin_id in admin_ids_env.split(',') if admin_id.strip()]
+
+# Если ADMIN_IDS пустой, выводим предупреждение
+if not ADMIN_IDS:
+    print("Внимание: Список администраторов пуст. Укажите ID администраторов в переменной ADMIN_IDS через запятую.")
+    ADMIN_IDS = []  # Устанавливаем пустой список, чтобы избежать ошибок
+
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.fsm.storage.memory import MemoryStorage
 import anthropic
@@ -50,18 +69,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация ключей API
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-CLAUDE_API_KEY = os.getenv('CLAUDE_API_KEY')
-POSTHOG_API_KEY = os.getenv('POSTHOG_API_KEY')
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_KEY = os.getenv('SUPABASE_KEY')
-CLAUDE_MODEL = os.getenv('CLAUDE_MODEL')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-
-
 openAiClient = OpenAI(
     api_key=OPENAI_API_KEY,  # This is the default and can be omitted
+)
+
+asyncOpenAiClient = AsyncOpenAI(
+    api_key=OPENAI_API_KEY,
 )
 
 # Инициализация Supabase
@@ -76,9 +89,9 @@ posthog = Posthog(
 # Инициализация основных компонентов
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
-router = Router()
 dp = Dispatcher(storage=storage)
-dp.include_router(router)
+router = Router()
+# Регистрируем роутер после создания всех обработчиков в main()
 claude = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
 # Словарь для хранения данных пользователей
@@ -95,6 +108,7 @@ async def load_user_data():
                 'message_count': user['message_count'] or 0,
                 'summary': user.get('summary', ''),
                 'message_limit': user.get('message_limit', 5),
+                'voice_enabled': user.get('voice_enabled', False),
             }
         return users
     except Exception as e:
@@ -110,6 +124,7 @@ async def save_user_data(user_id: str, user_data: dict):
             'message_count': user_data[user_id].get('message_count', 0),
             'summary': user_data[user_id].get('summary', ''),
             'message_limit': user_data[user_id].get('message_limit', 5),
+            'voice_enabled': user_data[user_id].get('voice_enabled', False),
         }
         response = supabase.table('users').upsert(data).execute()
         if hasattr(response, 'error') and response.error:
@@ -118,6 +133,81 @@ async def save_user_data(user_id: str, user_data: dict):
         print(f"Error saving user data: {str(e)}")
         print(f"Data attempted to save: {data}")
 
+async def generate_voice_message(text: str) -> str:
+    """Генерирует голосовое сообщение из текста и возвращает путь к аудиофайлу"""
+    try:
+        # Генерируем уникальное имя файла
+        file_path = f"voice_message_{hash(text + str(datetime.now()))}.ogg"
+        
+        logger.info(f"Генерация голосового сообщения: {text[:30]}...")
+        
+        # Инструкция для голоса
+        instructions = """
+        Voice Affect: Calm, Asian accent, and reassuring; project quiet authority and confidence.
+
+Tone: Sincere, empathetic, and gently authoritative—express genuine apology while conveying competence.
+
+Pacing: Steady and moderate; unhurried enough to communicate care, yet efficient enough to demonstrate professionalism.
+
+Emotion: Genuine empathy and understanding; speak with warmth, especially during apologies ("I'm very sorry for any disruption...").
+
+Pronunciation: Clear and precise, emphasizing key reassurances ("smoothly," "quickly," "promptly") to reinforce confidence.
+
+Pauses: Brief pauses after offering assistance or requesting details, highlighting willingness to listen and support.
+        """
+        
+        # Создаем голосовое сообщение с моделью из переменной окружения
+        response = await asyncOpenAiClient.audio.speech.create(
+            model=TTS_MODEL,
+            voice="nova", 
+            input=text,
+            instructions=instructions,
+            response_format="opus"
+        )
+        
+        logger.info(f"Голосовое сообщение успешно сгенерировано, сохраняем в файл {file_path}")
+        
+        # Сохраняем в файл
+        with open(file_path, 'wb') as f:
+            for chunk in response.iter_bytes():
+                f.write(chunk)
+        
+        logger.info(f"Голосовое сообщение сохранено как {file_path}")
+        return file_path
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании голосового сообщения: {str(e)}", exc_info=True)
+        return None
+
+async def send_voice_message(user_id, voice_file_path, text=None):
+    """
+    Отправляет голосовое сообщение пользователю
+    
+    Args:
+        user_id: ID пользователя
+        voice_file_path: Путь к файлу голосового сообщения
+        text: Текст сообщения (для логирования)
+    
+    Returns:
+        bool: Успешно ли отправлено сообщение
+    """
+    try:
+        if not os.path.exists(voice_file_path):
+            logger.error(f"Файл голосового сообщения не существует: {voice_file_path}")
+            return False
+        
+        logger.info(f"Отправляю голосовое сообщение пользователю {user_id}")
+        await bot.send_voice(
+            chat_id=user_id,
+            voice=types.FSInputFile(voice_file_path)
+        )
+        logger.info(f"Голосовое сообщение успешно отправлено пользователю {user_id}")
+        return True
+    except Exception as e:
+        short_text = text[:50] + "..." if text and len(text) > 50 else "нет текста"
+        logger.error(f"Ошибка при отправке голосового сообщения пользователю {user_id} (текст: {short_text}): {e}")
+        return False
+
 async def initialize_user_data(user_id: str, first_name: str) -> None:
     """Инициализация данных пользователя если их нет"""
     if user_id not in user_data:
@@ -125,7 +215,8 @@ async def initialize_user_data(user_id: str, first_name: str) -> None:
             "name": first_name,
             "history": [],
             "message_count": 0,
-            "message_limit": FREE_MESSAGES
+            "message_limit": FREE_MESSAGES,
+            "voice_enabled": True
         }
         await save_user_data(user_id, user_data)
 
@@ -416,7 +507,31 @@ async def handle_audio(message: types.Message):
         # Обработка текста через Claude
         logger.info("Отправляем запрос в Claude")
         response = await process_message(str(message.from_user.id), text)
-        await message.answer(response)
+        
+        # Проверяем, включены ли голосовые сообщения для этого пользователя
+        voice_enabled = user_data[user_id].get('voice_enabled', False)
+        
+        # ИЗМЕНЕНО: Отправляем либо голосовое, либо текстовое сообщение в зависимости от настройки
+        if voice_enabled:
+            # Отправляем статус записи голосового сообщения
+            await bot.send_chat_action(chat_id=message.chat.id, action="record_voice")
+            
+            try:
+                voice_file_path = await generate_voice_message(response)
+                if voice_file_path:
+                    await send_voice_message(user_id, voice_file_path, response)
+                    # Удаляем временный файл
+                    try:
+                        os.remove(voice_file_path)
+                    except Exception as e:
+                        logger.error(f"Ошибка при удалении временного файла: {e}")
+            except Exception as e:
+                logger.error(f"Ошибка при отправке голосового сообщения: {e}", exc_info=True)
+                # Если не удалось отправить голосовое, отправляем текстовое как запасной вариант
+                await message.answer(response)
+        else:
+            # Отправляем только текстовый ответ
+            await message.answer(response)
         
         # Удаление временного файла
         try:
@@ -442,11 +557,12 @@ async def is_psychological_query(message: str, user_id: str = None) -> tuple[boo
     if user_id and user_id in user_data and user_data[user_id]["history"]:
         last_messages = user_data[user_id]["history"][-3:]  # Берем последние 3 сообщения
         context = "\n".join([
-            f"User: {msg['user']}\nAssistant: {msg['assistant']}"
+            f"User: {msg.get('user', '')}\nAssistant: {msg.get('assistant', '')}"
             for msg in last_messages
+            if msg.get('user') is not None and msg.get('assistant') is not None
         ])
 
-    logger.info(context)
+    logger.info(f"Контекст для проверки релевантности: {context[:100]}...")
     
     # Проверяем релевантность запроса через Claude
     response = claude.messages.create(
@@ -468,8 +584,13 @@ async def is_psychological_query(message: str, user_id: str = None) -> tuple[boo
 
 # Добавляем фильтр для обычных текстовых сообщений (не команд)
 @router.message(F.content_type == 'text', ~F.text.startswith('/'))
-async def handle_text(message: types.Message):
+async def handle_text(message: types.Message, state: FSMContext):
     user_id = str(message.from_user.id)
+    
+    # Проверка на админское состояние перенесена в специальные обработчики
+    # Проверяем состояние только для логирования
+    current_state = await state.get_state()
+    logger.info(f"Обработка сообщения. Пользователь {user_id}, состояние: {current_state}")
     
     # Инициализация данных пользователя
     await initialize_user_data(user_id, message.from_user.first_name)
@@ -522,7 +643,36 @@ async def handle_text(message: types.Message):
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     await update_user_message_count(message, user_id)
     response = await process_message(user_id, message.text)
-    await message.answer(response)
+    
+    # Если voice_enabled отсутствует в данных, устанавливаем в True
+    if 'voice_enabled' not in user_data[user_id]:
+        user_data[user_id]['voice_enabled'] = True
+        await save_user_data(user_id, user_data)
+    
+    # Проверяем, включены ли голосовые сообщения для этого пользователя
+    voice_enabled = user_data[user_id].get('voice_enabled', True)
+    
+    # ИЗМЕНЕНО: Отправляем либо голосовое, либо текстовое сообщение в зависимости от настройки
+    if voice_enabled:
+        # Отправляем статус записи голосового сообщения
+        await bot.send_chat_action(chat_id=message.chat.id, action="record_voice")
+        
+        try:
+            voice_file_path = await generate_voice_message(response)
+            if voice_file_path:
+                await send_voice_message(user_id, voice_file_path, response)
+                # Удаляем временный файл
+                try:
+                    os.remove(voice_file_path)
+                except Exception as e:
+                    logger.error(f"Ошибка при удалении временного файла: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка при отправке голосового сообщения: {e}", exc_info=True)
+            # Если не удалось отправить голосовое, отправляем текстовое как запасной вариант
+            await message.answer(response)
+    else:
+        # Отправляем только текстовый ответ
+        await message.answer(response)
 
 async def summarize_user_history(user_id: str) -> str:
     """
@@ -630,13 +780,23 @@ async def process_message(user_id: str, message: str) -> str:
 # Обновляем help handler
 @router.message(Command('help'))
 async def help_handler(message: types.Message):
+    user_id = str(message.from_user.id)
+    is_admin = user_id in ADMIN_IDS
+    
     help_text = """
 🤖 *Доступные команды:*
 • /start - Начать диалог
 • /help - Показать это сообщение
 • /balance - Проверить баланс сообщений
 • /buy - Купить дополнительные сообщения
+• /startvoice - Включить голосовой режим (только голосовые ответы)
+• /stopvoice - Отключить голосовой режим (только текстовые ответы)
+"""
 
+    if is_admin:
+        help_text += "• /admin - Панель администратора\n"
+
+    help_text += """
 📝 *Я понимаю следующие форматы:*
 • Текстовые сообщения 💭
 • Голосовые сообщения 🎤
@@ -644,9 +804,58 @@ async def help_handler(message: types.Message):
 • Изображения документом 📄
 • Видео-кружки 🎥
 
+🔊 *Режимы ответов:*
+По умолчанию я отвечаю текстовыми сообщениями. Используй команду /startvoice, чтобы включить голосовой режим, и я буду отвечать только голосом. Используй /stopvoice, чтобы вернуться к текстовым ответам.
+
 Что-то не работает? Обратитесь к нашему боту поддержки: @useSomethingBot
     """
     await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
+
+@router.message(Command('startvoice'))
+async def start_voice_handler(message: types.Message):
+    user_id = str(message.from_user.id)
+    
+    # Инициализируем данные пользователя если их нет
+    await initialize_user_data(user_id, message.from_user.first_name)
+    
+    # Включаем голосовые сообщения
+    user_data[user_id]['voice_enabled'] = True
+    await save_user_data(user_id, user_data)
+    
+    # Логируем действие в PostHog
+    posthog.capture(
+        distinct_id=user_id,
+        event='voice_enabled',
+        properties={
+            'username': message.from_user.username,
+            'first_name': message.from_user.first_name
+        }
+    )
+    
+    await message.answer("🔊 Голосовой режим включен! Теперь я буду отвечать тебе только голосовыми сообщениями вместо текста.")
+
+@router.message(Command('stopvoice'))
+async def stop_voice_handler(message: types.Message):
+    user_id = str(message.from_user.id)
+    
+    # Инициализируем данные пользователя если их нет
+    await initialize_user_data(user_id, message.from_user.first_name)
+    
+    # Отключаем голосовые сообщения
+    user_data[user_id]['voice_enabled'] = False
+    await save_user_data(user_id, user_data)
+    
+    # Логируем действие в PostHog
+    posthog.capture(
+        distinct_id=user_id,
+        event='voice_disabled',
+        properties={
+            'username': message.from_user.username,
+            'first_name': message.from_user.first_name
+        }
+    )
+    
+    await message.answer("📝 Голосовой режим отключен. Я буду отвечать тебе только текстовыми сообщениями.")
 
 @router.callback_query(F.data == "send_star")
 async def handle_star_button(callback: types.CallbackQuery):
@@ -740,6 +949,9 @@ async def handle_image(message: types.Message):
     try:
         user_id = str(message.from_user.id)
         
+        # Инициализация данных пользователя
+        await initialize_user_data(user_id, message.from_user.first_name)
+        
         # Логируем получение изображения
         posthog.capture(
             distinct_id=user_id,
@@ -812,7 +1024,31 @@ async def handle_image(message: types.Message):
 
         # Обрабатываем текст через Claude
         response = await process_message(user_id, extracted_text)
-        await message.answer(response)
+        
+        # Проверяем, включены ли голосовые сообщения для этого пользователя
+        voice_enabled = user_data[user_id].get('voice_enabled', False)
+        
+        # ИЗМЕНЕНО: Отправляем либо голосовое, либо текстовое сообщение в зависимости от настройки
+        if voice_enabled:
+            # Отправляем статус записи голосового сообщения
+            await bot.send_chat_action(chat_id=message.chat.id, action="record_voice")
+            
+            try:
+                voice_file_path = await generate_voice_message(response)
+                if voice_file_path:
+                    await send_voice_message(user_id, voice_file_path, response)
+                    # Удаляем временный файл
+                    try:
+                        os.remove(voice_file_path)
+                    except Exception as e:
+                        logger.error(f"Ошибка при удалении временного файла: {e}")
+            except Exception as e:
+                logger.error(f"Ошибка при отправке голосового сообщения: {e}", exc_info=True)
+                # Если не удалось отправить голосовое, отправляем текстовое как запасной вариант
+                await message.answer(response)
+        else:
+            # Отправляем только текстовый ответ
+            await message.answer(response)
 
     except Exception as e:
         logger.error(f"Ошибка при обработке изображения: {str(e)}", exc_info=True)
@@ -825,129 +1061,427 @@ async def handle_image(message: types.Message):
         except:
             pass
 
-@router.message(Command('buy'))
-async def buy_handler(message: types.Message):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=PRICING_PLANS['basic']['button_text'], 
-            callback_data=PRICING_PLANS['basic']['callback_data']
-        )],
-        [InlineKeyboardButton(
-            text=PRICING_PLANS['premium']['button_text'], 
-            callback_data=PRICING_PLANS['premium']['callback_data']
-        )],
-        [InlineKeyboardButton(
-            text=PRICING_PLANS['unlimited']['button_text'], 
-            callback_data=PRICING_PLANS['unlimited']['callback_data']
-        )]
-    ])
-    
-    await message.answer(
-        PURCHASE_MESSAGE.format(
-            basic_messages=PRICING_PLANS['basic']['messages'],
-            basic_stars=PRICING_PLANS['basic']['stars'],
-            basic_price_usd=PRICING_PLANS['basic']['price_usd'],
-            premium_messages=PRICING_PLANS['premium']['messages'],
-            premium_stars=PRICING_PLANS['premium']['stars'],
-            premium_price_usd=PRICING_PLANS['premium']['price_usd'],
-            unlimited_stars=PRICING_PLANS['unlimited']['stars'],
-            unlimited_price_usd=PRICING_PLANS['unlimited']['price_usd']
-        ),
-        reply_markup=keyboard,
-        parse_mode=ParseMode.MARKDOWN,
-        disable_web_page_preview=True
-    )
-    
-    # Логируем открытие меню покупки
-    posthog.capture(
-        distinct_id=str(message.from_user.id),
-        event='buy_menu_opened',
-        properties={
-            'username': message.from_user.username,
-            'first_name': message.from_user.first_name,
-        }
-    )
+# Класс состояний для админ-панели
+class AdminState(StatesGroup):
+    waiting_for_notification_text = State()
+    confirm_notification = State()
 
-@router.message(Command('balance'))
-async def balance_handler(message: types.Message):
+# Обработчик для административной панели
+@router.message(Command('admin'))
+async def admin_panel(message: types.Message):
     user_id = str(message.from_user.id)
     
+    # Проверяем, является ли пользователь администратором
+    if user_id not in ADMIN_IDS:
+        await message.answer("У вас нет доступа к административной панели.")
+        return
+    
+    # Создаем клавиатуру для админ-панели
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Статистика пользователей", callback_data="user_stats")],
+        [InlineKeyboardButton(text="📣 Отправить уведомление всем пользователям", callback_data="send_notification")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_admin")]
+    ])
+    
+    await message.answer("🔐 *Панель администратора*\n\nВыберите действие:", 
+                       reply_markup=keyboard, 
+                       parse_mode=ParseMode.MARKDOWN)
+
+@router.callback_query(F.data == "send_notification")
+async def admin_notification(callback: types.CallbackQuery, state: FSMContext):
+    """Обработчик для отправки уведомления всем пользователям"""
+    user_id = str(callback.from_user.id)
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id not in ADMIN_IDS:
+        await callback.answer("У вас нет доступа к этой функции.")
+        return
+    
+    await callback.answer()
+    
+    # Устанавливаем состояние ожидания текста уведомления
+    await state.set_state(AdminState.waiting_for_notification_text)
+    
+    # Создаем функцию для обработки текста уведомления
+    async def notification_text_handler(message: types.Message, state: FSMContext):
+        """Обработчик для текста уведомления"""
+        user_id = str(message.from_user.id)
+        logger.info(f"Получен текст уведомления от администратора {user_id}: {message.text[:50]}...")
+        
+        # Проверяем на отмену
+        if message.text == '/cancel':
+            await state.clear()
+            await message.answer("❌ Отправка уведомления отменена.")
+            return
+        
+        # Сохраняем текст уведомления
+        await state.update_data(notification_text=message.text)
+        
+        # Отправляем предпросмотр сообщения
+        try:
+            await message.answer(
+                f"*Предпросмотр уведомления:*\n\n{message.text}",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при отправке предпросмотра: {e}")
+            await message.answer(
+                "Ошибка при форматировании. Возможно, некорректный Markdown. Попробуйте снова или используйте обычный текст."
+            )
+            return
+        
+        # Создаем клавиатуру для подтверждения
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📨 Только текст", callback_data="send_text_only")],
+            [InlineKeyboardButton(text="🔊 Только голос", callback_data="send_voice_only")],
+            [InlineKeyboardButton(text="📨 + 🔊 Текст + Голос", callback_data="send_text_voice")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_notification")]
+        ])
+        
+        await state.set_state(AdminState.confirm_notification)
+        await message.answer("Выберите тип рассылки:", reply_markup=keyboard)
+        logger.info(f"Пользователь {user_id} перешел в состояние подтверждения отправки уведомления")
+    
+    # Устанавливаем разовый обработчик для следующего текстового сообщения от этого пользователя
+    dp.message.register(notification_text_handler, lambda msg: msg.from_user.id == int(user_id) and msg.content_type == 'text')
+    
+    await callback.message.answer(
+        "📝 Введите текст уведомления, которое будет отправлено всем пользователям.\n\n"
+        "Вы можете использовать Markdown разметку.\n"
+        "Для отмены напишите /cancel"
+    )
+
+@router.callback_query(F.data == "send_text_only", AdminState.confirm_notification)
+async def admin_send_text_only(callback: types.CallbackQuery, state: FSMContext):
+    """Обработчик для отправки только текстовых уведомлений"""
+    logger.info("Выбрана отправка только текстовых уведомлений")
+    await callback.answer()
+    
+    data = await state.get_data()
+    notification_text = data.get("notification_text", "")
+    
+    # Проверяем, есть ли данные для отправки
+    if not notification_text:
+        logger.error("Не найден текст уведомления в данных состояния")
+        await callback.message.edit_text("❌ Ошибка: текст уведомления не найден. Попробуйте снова.")
+        await state.clear()
+        return
+    
+    logger.info(f"Начинаю отправку уведомлений с текстом: {notification_text[:50]}...")
+    await callback.message.edit_text("⏳ Начинаю отправку уведомлений...")
+    
+    # Запускаем отправку уведомлений в фоновом режиме
+    asyncio.create_task(
+        send_bulk_notification(
+            notification_text=notification_text,
+            admin_user_id=callback.from_user.id,
+            send_voice=False,
+            send_text=True
+        )
+    )
+    
+    await state.clear()
+
+@router.callback_query(F.data == "send_voice_only", AdminState.confirm_notification)
+async def admin_send_voice_only(callback: types.CallbackQuery, state: FSMContext):
+    """Обработчик для отправки только голосовых уведомлений"""
+    logger.info("Выбрана отправка только голосовых уведомлений")
+    await callback.answer()
+    
+    data = await state.get_data()
+    notification_text = data.get("notification_text", "")
+    
+    # Проверяем, есть ли данные для отправки
+    if not notification_text:
+        logger.error("Не найден текст уведомления в данных состояния")
+        await callback.message.edit_text("❌ Ошибка: текст уведомления не найден. Попробуйте снова.")
+        await state.clear()
+        return
+    
+    logger.info(f"Начинаю отправку голосовых уведомлений с текстом: {notification_text[:50]}...")
+    await callback.message.edit_text("⏳ Начинаю отправку голосовых уведомлений...")
+    
+    # Запускаем отправку уведомлений в фоновом режиме
+    asyncio.create_task(
+        send_bulk_notification(
+            notification_text=notification_text,
+            admin_user_id=callback.from_user.id,
+            send_voice=True,
+            send_text=False
+        )
+    )
+    
+    await state.clear()
+
+@router.callback_query(F.data == "send_text_voice", AdminState.confirm_notification)
+async def admin_send_text_voice(callback: types.CallbackQuery, state: FSMContext):
+    """Обработчик для отправки текстовых и голосовых уведомлений"""
+    logger.info("Выбрана отправка текстовых и голосовых уведомлений")
+    await callback.answer()
+    
+    data = await state.get_data()
+    notification_text = data.get("notification_text", "")
+    
+    # Проверяем, есть ли данные для отправки
+    if not notification_text:
+        logger.error("Не найден текст уведомления в данных состояния")
+        await callback.message.edit_text("❌ Ошибка: текст уведомления не найден. Попробуйте снова.")
+        await state.clear()
+        return
+    
+    logger.info(f"Начинаю отправку уведомлений (текст + голос) с текстом: {notification_text[:50]}...")
+    await callback.message.edit_text("⏳ Начинаю отправку уведомлений (текст + голос)...")
+    
+    # Запускаем отправку уведомлений в фоновом режиме
+    asyncio.create_task(
+        send_bulk_notification(
+            notification_text=notification_text,
+            admin_user_id=callback.from_user.id,
+            send_voice=True,
+            send_text=True
+        )
+    )
+    
+    await state.clear()
+
+@router.callback_query(F.data == "cancel_notification", AdminState.confirm_notification)
+async def admin_cancel_notification(callback: types.CallbackQuery, state: FSMContext):
+    """Обработчик для отмены отправки уведомлений"""
+    logger.info("Отмена отправки уведомлений")
+    await callback.answer()
+    await callback.message.edit_text("❌ Отправка уведомлений отменена.")
+    await state.clear()
+
+@router.callback_query(F.data == "cancel_admin")
+async def cancel_admin(callback: types.CallbackQuery):
+    """Отмена административных действий"""
+    await callback.answer()
+    await callback.message.edit_text("❌ Административные действия отменены.")
+
+@router.callback_query(F.data == "user_stats")
+async def get_user_stats(callback: types.CallbackQuery):
+    """Получение статистики пользователей"""
+    await callback.answer()
+    
     try:
-        # Получаем актуальные данные из базы
-        response = supabase.table('users').select('message_count, message_limit').eq('user_id', user_id).single().execute()
-        if response.data:
-            message_count = response.data.get('message_count', 0)
-            message_limit = response.data.get('message_limit', 5)
+        # Получаем данные о пользователях
+        response = supabase.table('users').select('*').execute()
+        
+        if not response.data:
+            await callback.message.answer("⚠️ Пользователи не найдены.")
+            return
             
-            # Обновляем локальные данные
-            if user_id not in user_data:
-                user_data[user_id] = {}
-            user_data[user_id]["message_count"] = message_count
-            user_data[user_id]["message_limit"] = message_limit
-            
-            # Вычисляем оставшиеся сообщения и процент использования
-            remaining_messages = max(0, message_limit - message_count)
-            percent_used = min(100, int((message_count / message_limit) * 100)) if message_limit > 0 else 100
-            
-            # Определяем статусное сообщение
-            if message_limit == float('inf') or message_limit == 999999:
-                status = 'unlimited'
-            elif remaining_messages <= 2:
-                status = 'critical'
-            elif remaining_messages <= 5:
-                status = 'low'
-            else:
-                status = 'good'
-            
-            # Отправляем сообщение о балансе
-            await message.answer(
-                BALANCE_MESSAGE.format(
-                    remaining_messages=remaining_messages if message_limit != float('inf') else "∞",
-                    message_limit=message_limit if message_limit != float('inf') else "∞",
-                    percent=percent_used,
-                    status_message=BALANCE_STATUS_MESSAGES[status]
-                ),
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-            # Логируем проверку баланса
-            posthog.capture(
-                distinct_id=user_id,
-                event='balance_checked',
-                properties={
-                    'remaining_messages': remaining_messages,
-                    'message_limit': message_limit,
-                    'percent_used': percent_used,
-                    'status': status,
-                    'username': message.from_user.username,
-                    'first_name': message.from_user.first_name,
-                }
-            )
-            
-        else:
-            # Если пользователь не найден, создаем запись с дефолтными значениями
-            message_limit = 5
-            message_count = 0
-            await message.answer(
-                BALANCE_MESSAGE.format(
-                    remaining_messages=message_limit,
-                    message_limit=message_limit,
-                    percent=0,
-                    status_message=BALANCE_STATUS_MESSAGES['good']
-                ),
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
+        total_users = len(response.data)
+        active_users = sum(1 for user in response.data if user.get('message_count', 0) > 0)
+        voice_enabled = sum(1 for user in response.data if user.get('voice_enabled', False))
+        
+        # Формируем текст статистики
+        stats_text = (
+            f"📊 *Статистика пользователей*\n\n"
+            f"👥 Всего пользователей: {total_users}\n"
+            f"💬 Активных пользователей: {active_users}\n"
+            f"🔊 С включенными голосовыми сообщениями: {voice_enabled}\n"
+        )
+        
+        await callback.message.answer(stats_text, parse_mode=ParseMode.MARKDOWN)
+        
     except Exception as e:
-        logger.error(f"Ошибка при проверке баланса: {str(e)}")
-        await message.answer(
-            "Извини, произошла ошибка при проверке баланса. Попробуй позже или напиши мне обычное сообщение 😊"
+        logger.error(f"Ошибка при получении статистики: {e}")
+        await callback.message.answer(f"❌ Произошла ошибка при получении статистики: {str(e)}")
+
+async def send_bulk_notification(notification_text: str, admin_user_id: int, send_voice: bool = False, send_text: bool = True):
+    """
+    Отправка уведомлений всем пользователям
+    
+    Args:
+        notification_text: Текст уведомления
+        admin_user_id: ID администратора, инициировавшего рассылку
+        send_voice: Отправлять ли голосовое сообщение
+        send_text: Отправлять ли текстовое сообщение
+    """
+    try:
+        logger.info(f"Начинаю массовую рассылку. Параметры: текст={send_text}, голос={send_voice}")
+        
+        # Получаем список всех пользователей
+        response = supabase.table("users").select("user_id").execute()
+        
+        if not response.data:
+            logger.warning("Нет пользователей для отправки уведомлений")
+            await bot.send_message(
+                chat_id=admin_user_id,
+                text="⚠️ Нет пользователей для отправки уведомлений."
+            )
+            return
+            
+        users = [user["user_id"] for user in response.data]
+        total_users = len(users)
+        success_count = 0
+        error_count = 0
+        
+        # Подготавливаем голосовое сообщение, если нужно
+        voice_file_path = None
+        if send_voice:
+            try:
+                voice_file_path = await generate_voice_message(notification_text)
+                if not voice_file_path:
+                    logger.error("Не удалось создать голосовое сообщение")
+                    await bot.send_message(
+                        chat_id=admin_user_id,
+                        text="❌ Ошибка при создании голосового сообщения. Продолжаю отправку только текстовых уведомлений."
+                    )
+                    send_voice = False
+            except Exception as e:
+                logger.error(f"Ошибка при создании голосового сообщения: {e}")
+                await bot.send_message(
+                    chat_id=admin_user_id,
+                    text=f"❌ Ошибка при создании голосового сообщения: {str(e)}. Продолжаю отправку только текстовых уведомлений."
+                )
+                send_voice = False
+        
+        # Отправляем уведомления всем пользователям
+        for i, user_id in enumerate(users):
+            try:
+                # Проверяем, существует ли чат с пользователем
+                if send_text:
+                    try:
+                        await bot.send_message(
+                            chat_id=int(user_id),
+                            text=notification_text,
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                    except Exception as e:
+                        logger.error(f"Ошибка при отправке текстового уведомления пользователю {user_id}: {e}")
+                        # Пробуем отправить без Markdown, если была ошибка форматирования
+                        if "can't parse entities" in str(e):
+                            try:
+                                await bot.send_message(
+                                    chat_id=int(user_id),
+                                    text=notification_text
+                                )
+                            except Exception as e2:
+                                logger.error(f"Повторная ошибка при отправке текстового уведомления пользователю {user_id}: {e2}")
+                                raise e2
+                
+                if send_voice and voice_file_path:
+                    try:
+                        await bot.send_voice(
+                            chat_id=int(user_id),
+                            voice=types.FSInputFile(voice_file_path)
+                        )
+                    except Exception as e:
+                        logger.error(f"Ошибка при отправке голосового уведомления пользователю {user_id}: {e}")
+                        raise e
+                
+                success_count += 1
+                
+                # Отправляем промежуточный статус администратору каждые 20 пользователей
+                if (i + 1) % 20 == 0 or i == len(users) - 1:
+                    progress = round((i + 1) / total_users * 100)
+                    await bot.send_message(
+                        chat_id=admin_user_id,
+                        text=f"📊 Прогресс: {i+1}/{total_users} ({progress}%)\n"
+                             f"✅ Успешно: {success_count}\n"
+                             f"❌ Ошибки: {error_count}"
+                    )
+                
+                # Задержка, чтобы не превысить лимиты Telegram API
+                await asyncio.sleep(0.1)
+                
+            except Exception as e:
+                logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {str(e)}")
+                error_count += 1
+                continue
+        
+        # Удаляем временный файл голосового сообщения
+        if voice_file_path and os.path.exists(voice_file_path):
+            try:
+                os.remove(voice_file_path)
+            except Exception as e:
+                logger.error(f"Ошибка при удалении временного файла голосового сообщения: {e}")
+        
+        # Отправляем итоговый статус
+        await bot.send_message(
+            chat_id=admin_user_id,
+            text=f"✅ Рассылка завершена!\n\n"
+                 f"📊 Всего пользователей: {total_users}\n"
+                 f"✅ Успешно отправлено: {success_count}\n"
+                 f"❌ Ошибки: {error_count}"
+        )
+        
+        # Логируем результат в PostHog
+        posthog.capture(
+            distinct_id=str(admin_user_id),
+            event='bulk_notification',
+            properties={
+                'total_users': total_users,
+                'success_count': success_count,
+                'error_count': error_count,
+                'send_text': send_text,
+                'send_voice': send_voice,
+                'notification_length': len(notification_text)
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Критическая ошибка при массовой рассылке: {str(e)}", exc_info=True)
+        await bot.send_message(
+            chat_id=admin_user_id,
+            text=f"❌ Произошла ошибка при выполнении массовой рассылки: {str(e)}"
         )
 
 async def main():
     try:
         logger.info("Starting bot...")
         global user_data
+        
+        # Регистрируем роутер раньше, чтобы обработчики корректно инициализировались
+        logger.info("Регистрируем обработчики состояний...")
+        dp.include_router(router)
+        
+        # Устанавливаем команды бота для контекстного меню
+        logger.info("Настраиваем команды для меню бота...")
+        # Основные команды для всех пользователей
+        base_commands = [
+            types.BotCommand(command="start", description="Начать диалог"),
+            types.BotCommand(command="help", description="Показать справку"),
+            types.BotCommand(command="balance", description="Проверить баланс сообщений"),
+            types.BotCommand(command="buy", description="Купить дополнительные сообщения"),
+            types.BotCommand(command="startvoice", description="Включить голосовой режим (только голосовые ответы)"),
+            types.BotCommand(command="stopvoice", description="Отключить голосовой режим (только текстовые ответы)"),
+        ]
+        
+        # Устанавливаем базовые команды для всех пользователей
+        await bot.set_my_commands(base_commands)
+        
+        # Дополнительные команды для администраторов
+        admin_commands = base_commands + [
+            types.BotCommand(command="admin", description="Панель администратора")
+        ]
+        
+        # Устанавливаем админские команды только для администраторов
+        for admin_id in ADMIN_IDS:
+            await bot.set_my_commands(
+                admin_commands,
+                scope=types.BotCommandScopeChat(chat_id=int(admin_id))
+            )
+            
+        # Проверяем наличие поля voice_enabled в базе данных
+        try:
+            logger.info("Проверяем структуру базы данных...")
+            # Для Supabase мы не можем напрямую создать столбец, но можем обновить запись
+            # с новым полем, и Supabase автоматически добавит его в схему
+            test_data = {
+                'user_id': 'test_user',
+                'name': 'Test User',
+                'history': [],
+                'message_count': 0,
+                'message_limit': 5,
+                'voice_enabled': False
+            }
+            supabase.table('users').upsert(test_data).execute()
+            logger.info("Структура базы данных обновлена")
+        except Exception as e:
+            logger.error(f"Ошибка при проверке структуры базы данных: {str(e)}")
         
         logger.info("Loading user data...")
         user_data = await load_user_data()
