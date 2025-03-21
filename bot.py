@@ -205,7 +205,19 @@ async def send_voice_message(user_id, voice_file_path, text=None):
         return True
     except Exception as e:
         short_text = text[:50] + "..." if text and len(text) > 50 else "нет текста"
-        logger.error(f"Ошибка при отправке голосового сообщения пользователю {user_id} (текст: {short_text}): {e}")
+        error_str = str(e)
+        
+        # Проверяем на специфическую ошибку запрета голосовых сообщений
+        if "VOICE_MESSAGES_FORBIDDEN" in error_str:
+            logger.warning(f"Пользователь {user_id} запретил отправку голосовых сообщений. Отправим только текст.")
+            # Сохраняем эту информацию в user_data, чтобы не пытаться отправлять голосовые сообщения в будущем
+            if user_id in user_data:
+                user_data[user_id]['voice_enabled'] = False
+                user_data[user_id]['voice_forbidden'] = True
+                asyncio.create_task(save_user_data(user_id, user_data))
+        else:
+            logger.error(f"Ошибка при отправке голосового сообщения пользователю {user_id} (текст: {short_text}): {e}")
+        
         return False
 
 async def initialize_user_data(user_id: str, first_name: str) -> None:
@@ -519,12 +531,18 @@ async def handle_audio(message: types.Message):
             try:
                 voice_file_path = await generate_voice_message(response)
                 if voice_file_path:
-                    await send_voice_message(user_id, voice_file_path, response)
+                    success = await send_voice_message(user_id, voice_file_path, response)
+                    # Если не удалось отправить голосовое, отправляем текстовое
+                    if not success:
+                        await message.answer(response)
                     # Удаляем временный файл
                     try:
                         os.remove(voice_file_path)
                     except Exception as e:
                         logger.error(f"Ошибка при удалении временного файла: {e}")
+                else:
+                    # Если не удалось создать голосовое, отправляем текстовое
+                    await message.answer(response)
             except Exception as e:
                 logger.error(f"Ошибка при отправке голосового сообщения: {e}", exc_info=True)
                 # Если не удалось отправить голосовое, отправляем текстовое как запасной вариант
@@ -649,8 +667,11 @@ async def handle_text(message: types.Message, state: FSMContext):
         user_data[user_id]['voice_enabled'] = True
         await save_user_data(user_id, user_data)
     
+    # Проверяем, есть ли запрет на голосовые сообщения для этого пользователя
+    voice_forbidden = user_data[user_id].get('voice_forbidden', False)
+    
     # Проверяем, включены ли голосовые сообщения для этого пользователя
-    voice_enabled = user_data[user_id].get('voice_enabled', True)
+    voice_enabled = user_data[user_id].get('voice_enabled', True) and not voice_forbidden
     
     # ИЗМЕНЕНО: Отправляем либо голосовое, либо текстовое сообщение в зависимости от настройки
     if voice_enabled:
@@ -660,12 +681,18 @@ async def handle_text(message: types.Message, state: FSMContext):
         try:
             voice_file_path = await generate_voice_message(response)
             if voice_file_path:
-                await send_voice_message(user_id, voice_file_path, response)
+                success = await send_voice_message(user_id, voice_file_path, response)
+                # Если не удалось отправить голосовое, отправляем текстовое
+                if not success:
+                    await message.answer(response)
                 # Удаляем временный файл
                 try:
                     os.remove(voice_file_path)
                 except Exception as e:
                     logger.error(f"Ошибка при удалении временного файла: {e}")
+            else:
+                # Если не удалось создать голосовое, отправляем текстовое
+                await message.answer(response)
         except Exception as e:
             logger.error(f"Ошибка при отправке голосового сообщения: {e}", exc_info=True)
             # Если не удалось отправить голосовое, отправляем текстовое как запасной вариант
@@ -1025,8 +1052,11 @@ async def handle_image(message: types.Message):
         # Обрабатываем текст через Claude
         response = await process_message(user_id, extracted_text)
         
+        # Проверяем, есть ли запрет на голосовые сообщения для этого пользователя
+        voice_forbidden = user_data[user_id].get('voice_forbidden', False)
+        
         # Проверяем, включены ли голосовые сообщения для этого пользователя
-        voice_enabled = user_data[user_id].get('voice_enabled', False)
+        voice_enabled = user_data[user_id].get('voice_enabled', False) and not voice_forbidden
         
         # ИЗМЕНЕНО: Отправляем либо голосовое, либо текстовое сообщение в зависимости от настройки
         if voice_enabled:
@@ -1036,12 +1066,18 @@ async def handle_image(message: types.Message):
             try:
                 voice_file_path = await generate_voice_message(response)
                 if voice_file_path:
-                    await send_voice_message(user_id, voice_file_path, response)
+                    success = await send_voice_message(user_id, voice_file_path, response)
+                    # Если не удалось отправить голосовое, отправляем текстовое
+                    if not success:
+                        await message.answer(response)
                     # Удаляем временный файл
                     try:
                         os.remove(voice_file_path)
                     except Exception as e:
                         logger.error(f"Ошибка при удалении временного файла: {e}")
+                else:
+                    # Если не удалось создать голосовое, отправляем текстовое
+                    await message.answer(response)
             except Exception as e:
                 logger.error(f"Ошибка при отправке голосового сообщения: {e}", exc_info=True)
                 # Если не удалось отправить голосовое, отправляем текстовое как запасной вариант
@@ -1084,7 +1120,7 @@ async def admin_panel(message: types.Message):
     ])
     
     await message.answer("🔐 *Панель администратора*\n\nВыберите действие:", 
-                       reply_markup=keyboard, 
+        reply_markup=keyboard,
                        parse_mode=ParseMode.MARKDOWN)
 
 @router.callback_query(F.data == "send_notification")
@@ -1347,8 +1383,8 @@ async def send_bulk_notification(notification_text: str, admin_user_id: int, sen
                         await bot.send_message(
                             chat_id=int(user_id),
                             text=notification_text,
-                            parse_mode=ParseMode.MARKDOWN
-                        )
+                parse_mode=ParseMode.MARKDOWN
+            )
                     except Exception as e:
                         logger.error(f"Ошибка при отправке текстового уведомления пользователю {user_id}: {e}")
                         # Пробуем отправить без Markdown, если была ошибка форматирования
@@ -1369,8 +1405,18 @@ async def send_bulk_notification(notification_text: str, admin_user_id: int, sen
                             voice=types.FSInputFile(voice_file_path)
                         )
                     except Exception as e:
-                        logger.error(f"Ошибка при отправке голосового уведомления пользователю {user_id}: {e}")
-                        raise e
+                        error_str = str(e)
+                        # Если пользователь запретил голосовые сообщения, отмечаем это, но не считаем ошибкой
+                        if "VOICE_MESSAGES_FORBIDDEN" in error_str:
+                            logger.warning(f"Пользователь {user_id} запретил голосовые сообщения")
+                            # Сохраняем информацию, если пользователь в user_data
+                            if user_id in user_data:
+                                user_data[user_id]['voice_enabled'] = False
+                                user_data[user_id]['voice_forbidden'] = True
+                                asyncio.create_task(save_user_data(user_id, user_data))
+                        else:
+                            logger.error(f"Ошибка при отправке голосового уведомления пользователю {user_id}: {e}")
+                            raise e
                 
                 success_count += 1
                 
