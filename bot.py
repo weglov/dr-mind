@@ -7,7 +7,6 @@ import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', message="FP16 is not supported on CPU; using FP32 instead")
 from posthog import Posthog
-from supabase import create_client, Client
 from config import (
     PRICING_PLANS,
     PURCHASE_MESSAGE,
@@ -32,8 +31,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 CLAUDE_API_KEY = os.getenv('CLAUDE_API_KEY')
 POSTHOG_API_KEY = os.getenv('POSTHOG_API_KEY')
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+DATABASE_URL = os.getenv('DATABASE_URL')
 CLAUDE_MODEL = os.getenv('CLAUDE_MODEL')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 TTS_MODEL = os.getenv('TTS_MODEL', 'gpt-4o-mini-tts')  # Используем gpt-4o-mini-tts по умолчанию
@@ -61,6 +59,7 @@ import asyncio
 from aiogram.types import LabeledPrice
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from scheduler import setup_scheduler
+import db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,9 +75,6 @@ openAiClient = OpenAI(
 asyncOpenAiClient = AsyncOpenAI(
     api_key=OPENAI_API_KEY,
 )
-
-# Инициализация Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Инициализация PostHog
 posthog = Posthog(
@@ -99,16 +95,16 @@ user_data = {}
 
 async def load_user_data():
     try:
-        response = supabase.table('users').select('*').execute()
         users = {}
-        for user in response.data:
-            users[str(user['user_id'])] = {
-                'name': user['name'],
-                'history': user['history'],
-                'message_count': user['message_count'] or 0,
-                'summary': user.get('summary', ''),
-                'message_limit': user.get('message_limit', 5),
-                'voice_enabled': user.get('voice_enabled', False),
+        records = await db.fetch_all_users()
+        for record in records:
+            users[str(record['user_id'])] = {
+                'name': record.get('name') or '',
+                'history': record.get('history') or [],
+                'message_count': record.get('message_count', 0) or 0,
+                'summary': record.get('summary') or '',
+                'message_limit': record.get('message_limit', 5) or 5,
+                'voice_enabled': record.get('voice_enabled', False) or False,
             }
         return users
     except Exception as e:
@@ -126,9 +122,7 @@ async def save_user_data(user_id: str, user_data: dict):
             'message_limit': user_data[user_id].get('message_limit', 5),
             'voice_enabled': user_data[user_id].get('voice_enabled', False),
         }
-        response = supabase.table('users').upsert(data).execute()
-        if hasattr(response, 'error') and response.error:
-            print(f"Supabase error: {response.error}")
+        await db.upsert_user(data)
     except Exception as e:
         print(f"Error saving user data: {str(e)}")
         print(f"Data attempted to save: {data}")
@@ -163,6 +157,9 @@ async def generate_voice_message(text: str) -> str:
         logger.info(f"Голосовое сообщение сохранено как {file_path}")
         return file_path
         
+    except openai.RateLimitError as e:
+        logger.error(f"Превышен лимит OpenAI API: {str(e)}")
+        return None
     except Exception as e:
         logger.error(f"Ошибка при создании голосового сообщения: {str(e)}", exc_info=True)
         return None
@@ -301,10 +298,10 @@ async def check_premium_access(message: types.Message, user_id: str) -> bool:
         
     # Перепроверяем количество сообщений в базе данных
     try:
-        response = supabase.table('users').select('message_count, message_limit').eq('user_id', user_id).single().execute()
-        if response.data:
-            actual_message_count = response.data.get('message_count', 0)
-            message_limit = response.data.get('message_limit', 5)
+        record = await db.fetch_user_message_stats(user_id)
+        if record:
+            actual_message_count = record.get('message_count', 0) or 0
+            message_limit = record.get('message_limit', 5) or 5
             # Обновляем локальные значения
             user_data[user_id]["message_count"] = actual_message_count
             user_data[user_id]["message_limit"] = message_limit
@@ -900,8 +897,11 @@ async def successful_payment(message: types.Message):
         plan_type = payload.replace('buy_', '').replace('_messages', '')
         
         # Получаем текущий лимит из базы
-        response = supabase.table('users').select('message_limit').eq('user_id', user_id).single().execute()
-        current_limit = response.data.get('message_limit', 30) if response.data else 5
+        record = await db.fetch_user_message_stats(user_id)
+        if record:
+            current_limit = record.get('message_limit', 30) or 30
+        else:
+            current_limit = 5
         
         # Определяем новый лимит в зависимости от плана
         if plan_type == 'basic':
@@ -919,7 +919,7 @@ async def successful_payment(message: types.Message):
             'user_id': user_id,
             'message_limit': new_limit
         }
-        response = supabase.table('users').upsert(data).execute()
+        await db.upsert_user(data)
         
         # Обновляем локальные данные
         if user_id in user_data:
@@ -1314,15 +1314,15 @@ async def get_user_stats(callback: types.CallbackQuery):
     
     try:
         # Получаем данные о пользователях
-        response = supabase.table('users').select('*').execute()
+        stats = await db.fetch_user_stats()
         
-        if not response.data:
+        if stats.get('total_users', 0) == 0:
             await callback.message.answer("⚠️ Пользователи не найдены.")
             return
             
-        total_users = len(response.data)
-        active_users = sum(1 for user in response.data if user.get('message_count', 0) > 0)
-        voice_enabled = sum(1 for user in response.data if user.get('voice_enabled', False))
+        total_users = stats['total_users']
+        active_users = stats['active_users']
+        voice_enabled = stats['voice_enabled']
         
         # Формируем текст статистики
         stats_text = (
@@ -1352,9 +1352,9 @@ async def send_bulk_notification(notification_text: str, admin_user_id: int, sen
         logger.info(f"Начинаю массовую рассылку. Параметры: текст={send_text}, голос={send_voice}")
         
         # Получаем список всех пользователей
-        response = supabase.table("users").select("user_id").execute()
+        users = await db.fetch_all_user_ids()
         
-        if not response.data:
+        if not users:
             logger.warning("Нет пользователей для отправки уведомлений")
             await bot.send_message(
                 chat_id=admin_user_id,
@@ -1365,7 +1365,6 @@ async def send_bulk_notification(notification_text: str, admin_user_id: int, sen
             await state.clear()
             return
             
-        users = [user["user_id"] for user in response.data]
         total_users = len(users)
         success_count = 0
         error_count = 0
@@ -1512,6 +1511,12 @@ async def main():
         # Регистрируем роутер раньше, чтобы обработчики корректно инициализировались
         logger.info("Регистрируем обработчики состояний...")
         dp.include_router(router)
+
+        if not DATABASE_URL:
+            logger.error("DATABASE_URL не задана. Укажите переменную окружения DATABASE_URL.")
+            sys.exit(1)
+
+        await db.init_db_pool(DATABASE_URL)
         
         # Устанавливаем команды бота для контекстного меню
         logger.info("Настраиваем команды для меню бота...")
@@ -1541,38 +1546,24 @@ async def main():
                 scope=types.BotCommandScopeChat(chat_id=int(admin_id))
             )
             
-        # Проверяем наличие поля voice_enabled в базе данных
-        try:
-            logger.info("Проверяем структуру базы данных...")
-            # Для Supabase мы не можем напрямую создать столбец, но можем обновить запись
-            # с новым полем, и Supabase автоматически добавит его в схему
-            test_data = {
-                'user_id': 'test_user',
-                'name': 'Test User',
-                'history': [],
-                'message_count': 0,
-                'message_limit': 5,
-                'voice_enabled': False
-            }
-            supabase.table('users').upsert(test_data).execute()
-            logger.info("Структура базы данных обновлена")
-        except Exception as e:
-            logger.error(f"Ошибка при проверке структуры базы данных: {str(e)}")
-        
         logger.info("Loading user data...")
         user_data = await load_user_data()
         
+        scheduler = None
+
         # Настраиваем планировщик
         logger.info("Setting up scheduler...")
-        scheduler = setup_scheduler(bot, supabase, posthog)
+        scheduler = setup_scheduler(bot, posthog)
         
         logger.info("Starting polling...")
         try:
             await dp.start_polling(bot, skip_updates=True)
         finally:
             logger.info("Shutting down scheduler...")
-            scheduler.shutdown()
+            if scheduler:
+                scheduler.shutdown()
             await bot.session.close()
+            await db.close_db_pool()
             
     except Exception as e:
         logger.error(f"Critical error: {e}", exc_info=True)

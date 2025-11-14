@@ -3,9 +3,9 @@ import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import random
 from posthog import Posthog
-from supabase import Client
 from aiogram import Bot
 from apscheduler.triggers.cron import CronTrigger
+import db
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +36,11 @@ STICKER_IDS = [
     "CAACAgQAAxkBAAEM1D9nug8Twpn2CAijRj6EHYPOmFCrSgACGxEAAnu7gFDZ_ClKKc1VZTYE"
 ]
 
-async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
+async def send_weekly_messages(bot: Bot, posthog: Posthog):
     try:
         logger.info("Начинаем еженедельную рассылку сообщений...")
         # Получаем всех пользователей из базы данных
-        response = supabase.table('users').select('user_id, history').execute()
-        users = [(user['user_id'], user.get('history')) for user in response.data]
+        users = await db.fetch_users_history()
         
         successful_sends = 0
         failed_sends = 0
@@ -49,11 +48,11 @@ async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
         # Отправляем случайное сообщение и стикер каждому пользователю
         for user in users:
             try:
-                user_id = user[0]
+                user_id = user["user_id"]
                 
                 logger.info(user_id)
 
-                user_history = user[1] or []
+                user_history = user.get("history") or []
                 
                 message = random.choice(WEEKLY_MESSAGES)
                 sticker_id = random.choice(STICKER_IDS)
@@ -84,7 +83,7 @@ async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
                     logger.info(f"Добавлено новое еженедельное сообщение для пользователя {user_id}")
                 
                 # Обновляем историю в базе данных
-                supabase.table('users').update({'history': user_history}).eq('user_id', user_id).execute()
+                await db.update_user_fields(user_id, history=user_history)
                 
                 successful_sends += 1
                 
@@ -114,7 +113,7 @@ async def send_weekly_messages(bot: Bot, supabase: Client, posthog: Posthog):
     except Exception as e:
         logger.error(f"Ошибка в send_weekly_messages: {e}")
 
-def setup_scheduler(bot: Bot, supabase: Client, posthog: Posthog):
+def setup_scheduler(bot: Bot, posthog: Posthog):
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     
     # Запускаем каждую пятницу в 19:00 по московскому времени
@@ -128,7 +127,7 @@ def setup_scheduler(bot: Bot, supabase: Client, posthog: Posthog):
         ),
         id='weekly_messages',
         replace_existing=True,
-        args=[bot, supabase, posthog]
+        args=[bot, posthog]
     )
     
     scheduler.start()
