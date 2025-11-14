@@ -1,22 +1,31 @@
-# Используем официальный образ Python
-FROM python:3.11-slim
+# Используем официальный образ Go
+FROM golang:1.21-alpine AS builder
 
-# Устанавливаем рабочую директорию в контейнере
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем системные зависимости
-RUN apt-get update && apt-get install -y \
-  ffmpeg \
-  && rm -rf /var/lib/apt/lists/*
+# Копируем go.mod и go.sum
+COPY go.mod go.sum* ./
 
-# Копируем файлы зависимостей
-COPY requirements.txt .
+# Скачиваем зависимости
+RUN go mod download
 
-# Устанавливаем зависимости Python
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Копируем остальные файлы проекта
+# Копируем исходный код
 COPY . .
 
+# Собираем приложение
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bot ./cmd/bot
+
+# Финальный образ
+FROM alpine:latest
+
+# Устанавливаем ca-certificates для HTTPS запросов
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+# Копируем бинарник из builder
+COPY --from=builder /app/bot .
+
 # Запускаем бота
-CMD ["python", "bot.py"]
+CMD ["./bot"]

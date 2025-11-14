@@ -1,9 +1,0 @@
-aiogram==3.16.0
-anthropic==0.72.1
-python-dotenv==1.0.1
-posthog==3.7.5
-asyncpg==0.29.0
-SQLAlchemy[asyncio]==2.0.36
-python-telegram-bot>=20.0 
-openai>=1.68.0
-APScheduler==3.10.4
