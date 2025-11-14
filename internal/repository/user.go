@@ -8,6 +8,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/sirupsen/logrus"
 )
 
 type User struct {
@@ -152,15 +153,42 @@ func (r *Repository) GetConversations(ctx context.Context, userID string, limit 
 			return nil, err
 		}
 
-		// Расшифровываем
-		userMsg, err := r.crypto.Decrypt(encryptedUser)
-		if err != nil {
-			return nil, err
+		// Пропускаем пустые значения
+		if encryptedUser == "" || encryptedAssistant == "" {
+			logrus.WithFields(logrus.Fields{
+				"user_id": userID,
+			}).Warn("Empty encrypted message found, skipping conversation")
+			continue
 		}
 
-		assistantMsg, err := r.crypto.Decrypt(encryptedAssistant)
+		// Расшифровываем пользовательское сообщение (или используем как plaintext для старых данных)
+		userMsg, isUserPlaintext, err := r.crypto.DecryptOrPlaintext(encryptedUser)
 		if err != nil {
-			return nil, err
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"user_id": userID,
+				"encrypted_length": len(encryptedUser),
+			}).Warn("Failed to decrypt user message (possibly encrypted with different key), skipping conversation")
+			continue
+		}
+		if isUserPlaintext {
+			logrus.WithFields(logrus.Fields{
+				"user_id": userID,
+			}).Debug("User message is plaintext (old unencrypted data)")
+		}
+
+		// Расшифровываем сообщение ассистента (или используем как plaintext для старых данных)
+		assistantMsg, isAssistantPlaintext, err := r.crypto.DecryptOrPlaintext(encryptedAssistant)
+		if err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"user_id": userID,
+				"encrypted_length": len(encryptedAssistant),
+			}).Warn("Failed to decrypt assistant message (possibly encrypted with different key), skipping conversation")
+			continue
+		}
+		if isAssistantPlaintext {
+			logrus.WithFields(logrus.Fields{
+				"user_id": userID,
+			}).Debug("Assistant message is plaintext (old unencrypted data)")
 		}
 
 		messages = append(messages, Message{

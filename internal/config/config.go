@@ -3,6 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -14,6 +17,25 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	// Try to load .env file from multiple possible locations
+	wd, _ := os.Getwd()
+
+	// First try current directory
+	if err := godotenv.Load(); err != nil {
+		// Try from project root (assuming we're in cmd/bot or similar)
+		// Go up to find .env file
+		currentWd := wd
+		for i := 0; i < 3; i++ {
+			envPath := filepath.Join(currentWd, ".env")
+			if _, err := os.Stat(envPath); err == nil {
+				if loadErr := godotenv.Load(envPath); loadErr == nil {
+					break
+				}
+			}
+			currentWd = filepath.Dir(currentWd)
+		}
+	}
+
 	encryptionKey := os.Getenv("ENCRYPTION_KEY")
 	if encryptionKey == "" {
 		return nil, fmt.Errorf("ENCRYPTION_KEY is required")
