@@ -12,14 +12,16 @@ import (
 )
 
 type AudioHandler struct {
-	tgClient    *telegram.Client
-	userService *services.UserService
+	tgClient     *telegram.Client
+	userService  *services.UserService
+	whisperService *services.WhisperService
 }
 
-func NewAudioHandler(tgClient *telegram.Client, userService *services.UserService) *AudioHandler {
+func NewAudioHandler(tgClient *telegram.Client, userService *services.UserService, whisperService *services.WhisperService) *AudioHandler {
 	return &AudioHandler{
-		tgClient:    tgClient,
-		userService: userService,
+		tgClient:      tgClient,
+		userService:   userService,
+		whisperService: whisperService,
 	}
 }
 
@@ -89,8 +91,39 @@ func (h *AudioHandler) HandleAudioMessage(ctx context.Context, update tgbotapi.U
 		return fmt.Errorf("failed to save file: %w", err)
 	}
 
-	// TODO: Транскрибация через внешний сервис
-	// Пока возвращаем сообщение что нужно отправить текстом
-	reply := "Извините, обработка голосовых сообщений временно недоступна. Пожалуйста, отправьте ваше сообщение текстом."
-	return h.tgClient.SendMessagePlain(chatID, reply)
+	// Закрываем файл перед транскрибацией
+	outFile.Close()
+
+	// Транскрибируем аудио в текст
+	if h.whisperService == nil {
+		reply := "Извините, обработка голосовых сообщений недоступна. Пожалуйста, отправьте ваше сообщение текстом."
+		return h.tgClient.SendMessagePlain(chatID, reply)
+	}
+
+	transcribedText, err := h.whisperService.Transcribe(ctx, localFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to transcribe audio: %w", err)
+	}
+
+	if transcribedText == "" {
+		reply := "Не удалось распознать текст в голосовом сообщении. Пожалуйста, попробуйте еще раз или отправьте сообщение текстом."
+		return h.tgClient.SendMessagePlain(chatID, reply)
+	}
+
+	// Обрабатываем транскрибированный текст как обычное текстовое сообщение
+	response, err := h.userService.ProcessMessage(ctx, fmt.Sprintf("%d", userID), transcribedText)
+	if err != nil {
+		// Проверяем на нерелевантный запрос
+		errStr := err.Error()
+		if len(errStr) > 11 && errStr[:11] == "irrelevant:" {
+			explanation := errStr[12:]
+			reply := "Извините, но я могу помочь только с вопросами, связанными с психологической помощью и ментальным здоровьем. " + explanation
+			return h.tgClient.SendMessagePlain(chatID, reply)
+		}
+
+		return fmt.Errorf("failed to process transcribed message: %w", err)
+	}
+
+	// Отправляем ответ
+	return h.tgClient.SendMessage(chatID, response)
 }

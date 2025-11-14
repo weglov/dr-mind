@@ -14,6 +14,7 @@ type Config struct {
 	ClaudeModel   string
 	DatabaseURL   string
 	EncryptionKey string
+	OpenAIAPIKey  string
 }
 
 func Load() (*Config, error) {
@@ -56,12 +57,16 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 
+	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
+	// OpenAI API key не обязателен, но нужен для транскрибации голосовых сообщений
+
 	return &Config{
 		BotToken:      botToken,
 		ClaudeAPIKey:  claudeAPIKey,
 		ClaudeModel:   getEnv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
 		DatabaseURL:   databaseURL,
 		EncryptionKey: encryptionKey,
+		OpenAIAPIKey:  openAIAPIKey,
 	}, nil
 }
 

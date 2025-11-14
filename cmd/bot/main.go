@@ -49,11 +49,12 @@ func main() {
 	// Инициализация сервисов
 	claudeService := services.NewClaudeService(cfg.ClaudeAPIKey, cfg.ClaudeModel)
 	userService := services.NewUserService(repo, claudeService)
+	whisperService := services.NewWhisperService(cfg.OpenAIAPIKey)
 
 	// Инициализация обработчиков
 	commandHandler := handlers.NewCommandHandler(tgClient, userService, cfg)
 	messageHandler := handlers.NewMessageHandler(tgClient, userService)
-	audioHandler := handlers.NewAudioHandler(tgClient, userService)
+	audioHandler := handlers.NewAudioHandler(tgClient, userService, whisperService)
 
 	// Инициализация планировщика
 	sched := scheduler.NewScheduler(repo, tgClient)
