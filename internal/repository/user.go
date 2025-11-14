@@ -217,17 +217,18 @@ func (r *Repository) GetConversationCount(ctx context.Context, userID string) (i
 // Summary methods (отдельная таблица)
 
 func (r *Repository) GetCurrentSummary(ctx context.Context, userID string) (*Summary, error) {
-	query := `SELECT id, user_id, summary_text, message_count_at_summary, created_at, updated_at, is_current
+	query := `SELECT id, user_id, encrypted_summary_text, message_count_at_summary, created_at, updated_at, is_current
               FROM summaries 
               WHERE user_id = $1 AND is_current = TRUE
               ORDER BY updated_at DESC
               LIMIT 1`
 
 	var summary Summary
+	var encryptedSummaryText string
 	err := r.db.QueryRowContext(ctx, query, userID).Scan(
 		&summary.ID,
 		&summary.UserID,
-		&summary.SummaryText,
+		&encryptedSummaryText,
 		&summary.MessageCountAtSummary,
 		&summary.CreatedAt,
 		&summary.UpdatedAt,
@@ -239,6 +240,25 @@ func (r *Repository) GetCurrentSummary(ctx context.Context, userID string) (*Sum
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	// Расшифровываем суммаризацию (или используем как plaintext для старых данных)
+	summaryText, isPlaintext, err := r.crypto.DecryptOrPlaintext(encryptedSummaryText)
+	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"user_id": userID,
+			"summary_id": summary.ID,
+		}).Warn("Failed to decrypt summary, using as plaintext")
+		// Если расшифровка не удалась, используем как есть (для обратной совместимости)
+		summary.SummaryText = encryptedSummaryText
+	} else {
+		summary.SummaryText = summaryText
+		if isPlaintext {
+			logrus.WithFields(logrus.Fields{
+				"user_id": userID,
+				"summary_id": summary.ID,
+			}).Debug("Summary is plaintext (old unencrypted data)")
+		}
 	}
 
 	return &summary, nil
@@ -253,20 +273,32 @@ func (r *Repository) SaveSummary(ctx context.Context, userID string, summaryText
 		return err
 	}
 
-	// Сохраняем новую суммаризацию
-	query := `INSERT INTO summaries (user_id, summary_text, message_count_at_summary, is_current)
+	// Шифруем суммаризацию
+	encryptedSummary, err := r.crypto.Encrypt(summaryText)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt summary: %w", err)
+	}
+
+	// Сохраняем новую зашифрованную суммаризацию
+	query := `INSERT INTO summaries (user_id, encrypted_summary_text, message_count_at_summary, is_current)
               VALUES ($1, $2, $3, TRUE)`
 
-	_, err = r.db.ExecContext(ctx, query, userID, summaryText, messageCount)
+	_, err = r.db.ExecContext(ctx, query, userID, encryptedSummary, messageCount)
 	return err
 }
 
 func (r *Repository) UpdateSummary(ctx context.Context, summaryID int, summaryText string) error {
+	// Шифруем суммаризацию
+	encryptedSummary, err := r.crypto.Encrypt(summaryText)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt summary: %w", err)
+	}
+
 	query := `UPDATE summaries 
-              SET summary_text = $1, updated_at = NOW() 
+              SET encrypted_summary_text = $1, updated_at = NOW() 
               WHERE id = $2`
 
-	_, err := r.db.ExecContext(ctx, query, summaryText, summaryID)
+	_, err = r.db.ExecContext(ctx, query, encryptedSummary, summaryID)
 	return err
 }
 

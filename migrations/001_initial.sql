@@ -21,11 +21,11 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON conversations(created_at);
 
--- Таблица суммаризаций (отдельно)
+-- Таблица суммаризаций (отдельно, зашифрованная)
 CREATE TABLE IF NOT EXISTS summaries (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    summary_text TEXT NOT NULL,
+    encrypted_summary_text TEXT NOT NULL,
     message_count_at_summary INTEGER NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
