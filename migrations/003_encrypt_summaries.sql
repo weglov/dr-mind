@@ -11,3 +11,4 @@ SELECT
     COUNT(*) as total_summaries
 FROM summaries;
 
+

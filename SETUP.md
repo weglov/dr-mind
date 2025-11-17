@@ -127,3 +127,4 @@ go build ./cmd/bot
 ## Остановка бота
 
 Нажмите `Ctrl+C` для graceful shutdown.
+

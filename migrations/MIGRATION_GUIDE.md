@@ -141,3 +141,4 @@ psql -d dr_mind < backup_before_migration.sql
 1. Есть ли данные в `history` (не NULL и не пустой массив)
 2. Есть ли данные в `summary` (не NULL и не пустая строка)
 3. Выполните проверочные запросы из шага 3
+
