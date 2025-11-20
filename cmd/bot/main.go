@@ -148,7 +148,13 @@ func setupBotCommands(tgClient *telegram.Client) error {
 		{Command: "supervisor", Description: "Переключить режим супервизора"},
 	}
 
-	cmdConfig := tgbotapi.NewSetMyCommands(commands...)
+	// Удаляем команды для дефолтного скоупа (на всякий случай, чтобы очистить кэш)
+	// tgClient.Bot.Request(tgbotapi.NewDeleteMyCommands())
+
+	// Устанавливаем команды конкретно для всех приватных чатов
+	scope := tgbotapi.NewBotCommandScopeAllPrivateChats()
+	cmdConfig := tgbotapi.NewSetMyCommandsWithScope(scope, commands...)
+
 	_, err := tgClient.Bot.Request(cmdConfig)
 	return err
 }
