@@ -67,34 +67,13 @@ func (r *Repository) SetSupervisorMode(ctx context.Context, userID string, isSup
 
 func (r *Repository) AddConversation(ctx context.Context, userID string, userMsg, assistantMsg string) error {
 	// Получаем текущий индекс сообщения
-	var maxIndex int
-	// Using raw SQL or builder for COALESCE behavior
-	var result struct {
-		MaxIndex *int
-	}
-	// In GORM, Model(&Conversation{}).Select("MAX(message_index)")...
-	// Let's do it slightly differently to match exact logic
-	err := r.db.WithContext(ctx).Model(&Conversation{}).
-		Where("user_id = ?", userID).
-		Select("MAX(message_index)").
-		Scan(&maxIndex).Error
-	
-	// If no rows found or null, maxIndex will be 0 (int default), which is fine if we assume 1-based indexing starts next
-    // But wait, previous logic used -1 if null. Let's replicate that safely.
-    // Actually, simpler: just count and use count+1 or rely on GORM
-    
-    // Replicating original logic:
-    var maxIndexNull sql.NullInt64
-    // Need database/sql import for this? Or just pointer *int
-    
-    // Let's stick to a simpler query for max index
-    var currentMax *int
-    r.db.WithContext(ctx).Model(&Conversation{}).Where("user_id = ?", userID).Select("MAX(message_index)").Scan(&currentMax)
-    
-    nextIndex := 0
-    if currentMax != nil {
-        nextIndex = *currentMax + 1
-    } 
+	var currentMax *int
+	r.db.WithContext(ctx).Model(&Conversation{}).Where("user_id = ?", userID).Select("MAX(message_index)").Scan(&currentMax)
+
+	nextIndex := 0
+	if currentMax != nil {
+		nextIndex = *currentMax + 1
+	} 
 
 	// Шифруем сообщения
 	encryptedUser, err := r.crypto.Encrypt(userMsg)
@@ -250,7 +229,7 @@ func (r *Repository) SaveSummary(ctx context.Context, userID string, summaryText
 	})
 }
 
-func (r *Repository) UpdateSummary(ctx context.Context, summaryID int, summaryText string) error {
+func (r *Repository) UpdateSummary(ctx context.Context, summaryID uint, summaryText string) error {
 	encryptedSummary, err := r.crypto.Encrypt(summaryText)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt summary: %w", err)
