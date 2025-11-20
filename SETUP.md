@@ -128,3 +128,4 @@ go build ./cmd/bot
 
 Нажмите `Ctrl+C` для graceful shutdown.
 
+

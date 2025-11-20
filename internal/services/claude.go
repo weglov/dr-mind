@@ -125,6 +125,10 @@ func (s *ClaudeService) CheckRelevance(ctx context.Context, message string, cont
 		return false, "", err
 	}
 
-	isRelevant := len(response) >= 3 && response[:3] == "yes"
+	cleanedResponse := strings.TrimSpace(strings.ToLower(response))
+	cleanedResponse = strings.Trim(cleanedResponse, "*")
+	cleanedResponse = strings.TrimSpace(cleanedResponse)
+
+	isRelevant := strings.HasPrefix(cleanedResponse, "yes")
 	return isRelevant, response, nil
 }

@@ -91,7 +91,13 @@ func (s *UserService) ProcessMessage(ctx context.Context, userID, message string
 	}
 
 	// 6. Формируем промпт с суммаризацией
-	systemPrompt := prompts.TherapistPrompt
+	var systemPrompt string
+	if user.IsSupervisorMode {
+		systemPrompt = prompts.SupervisorPrompt
+	} else {
+		systemPrompt = prompts.TherapistPrompt
+	}
+
 	if summary != nil && summary.SummaryText != "" {
 		systemPrompt += "\n\nКраткое резюме о пользователе:\n" + summary.SummaryText
 	}
@@ -119,6 +125,24 @@ func (s *UserService) ProcessMessage(ctx context.Context, userID, message string
 	}
 
 	return response, nil
+}
+
+func (s *UserService) ToggleSupervisorMode(ctx context.Context, userID string) (bool, error) {
+	user, err := s.repo.GetUser(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	if user == nil {
+		return false, fmt.Errorf("user not found")
+	}
+
+	newMode := !user.IsSupervisorMode
+	err = s.repo.SetSupervisorMode(ctx, userID, newMode)
+	if err != nil {
+		return false, err
+	}
+
+	return newMode, nil
 }
 
 func (s *UserService) getContext(history []repository.Message) string {

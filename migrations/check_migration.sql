@@ -35,3 +35,4 @@ WHERE table_name IN ('users', 'conversations', 'summaries')
 ORDER BY table_name, ordinal_position;
 
 
+

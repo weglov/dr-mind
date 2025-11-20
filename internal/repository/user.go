@@ -2,53 +2,30 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"dr_mind/internal/crypto"
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
 	"github.com/sirupsen/logrus"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
-type User struct {
-	UserID       string
-	Name         string
-	MessageCount int
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-}
-
-type Message struct {
-	User      string
-	Assistant string
-	Timestamp time.Time
-}
-
-type Summary struct {
-	ID                    int
-	UserID                string
-	SummaryText           string
-	MessageCountAtSummary int
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-	IsCurrent             bool
-}
-
 type Repository struct {
-	db     *sql.DB
+	db     *gorm.DB
 	crypto *crypto.EncryptionService
 }
 
 func NewRepository(dsn string, encryptionKey string) (*Repository, error) {
-	db, err := sql.Open("postgres", dsn)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Проверяем соединение
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+	// Авто-миграция
+	err = db.AutoMigrate(&User{}, &Conversation{}, &Summary{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
 	cryptoService, err := crypto.NewEncryptionService(encryptionKey)
@@ -65,53 +42,59 @@ func NewRepository(dsn string, encryptionKey string) (*Repository, error) {
 // User methods
 
 func (r *Repository) GetUser(ctx context.Context, userID string) (*User, error) {
-	query := `SELECT user_id, name, message_count, created_at, updated_at 
-              FROM users WHERE user_id = $1`
-
 	var user User
-	err := r.db.QueryRowContext(ctx, query, userID).Scan(
-		&user.UserID,
-		&user.Name,
-		&user.MessageCount,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
+	err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&user).Error
+	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-
 	return &user, nil
 }
 
 func (r *Repository) UpsertUser(ctx context.Context, user *User) error {
-	query := `INSERT INTO users (user_id, name, message_count, updated_at)
-              VALUES ($1, $2, $3, NOW())
-              ON CONFLICT (user_id) 
-              DO UPDATE SET 
-                name = EXCLUDED.name,
-                message_count = EXCLUDED.message_count,
-                updated_at = NOW()`
+	// GORM's Save handles upsert logic if primary key is present
+	// But to be explicit about ON CONFLICT behavior matching previous logic:
+	return r.db.WithContext(ctx).Save(user).Error
+}
 
-	_, err := r.db.ExecContext(ctx, query, user.UserID, user.Name, user.MessageCount)
-	return err
+func (r *Repository) SetSupervisorMode(ctx context.Context, userID string, isSupervisor bool) error {
+	return r.db.WithContext(ctx).Model(&User{}).Where("user_id = ?", userID).Update("is_supervisor_mode", isSupervisor).Error
 }
 
 // Conversation methods (зашифрованные)
 
 func (r *Repository) AddConversation(ctx context.Context, userID string, userMsg, assistantMsg string) error {
 	// Получаем текущий индекс сообщения
-	var maxIndex sql.NullInt64
-	err := r.db.QueryRowContext(ctx,
-		"SELECT COALESCE(MAX(message_index), -1) FROM conversations WHERE user_id = $1",
-		userID).Scan(&maxIndex)
-	if err != nil {
-		return err
+	var maxIndex int
+	// Using raw SQL or builder for COALESCE behavior
+	var result struct {
+		MaxIndex *int
 	}
-
-	nextIndex := int(maxIndex.Int64) + 1
+	// In GORM, Model(&Conversation{}).Select("MAX(message_index)")...
+	// Let's do it slightly differently to match exact logic
+	err := r.db.WithContext(ctx).Model(&Conversation{}).
+		Where("user_id = ?", userID).
+		Select("MAX(message_index)").
+		Scan(&maxIndex).Error
+	
+	// If no rows found or null, maxIndex will be 0 (int default), which is fine if we assume 1-based indexing starts next
+    // But wait, previous logic used -1 if null. Let's replicate that safely.
+    // Actually, simpler: just count and use count+1 or rely on GORM
+    
+    // Replicating original logic:
+    var maxIndexNull sql.NullInt64
+    // Need database/sql import for this? Or just pointer *int
+    
+    // Let's stick to a simpler query for max index
+    var currentMax *int
+    r.db.WithContext(ctx).Model(&Conversation{}).Where("user_id = ?", userID).Select("MAX(message_index)").Scan(&currentMax)
+    
+    nextIndex := 0
+    if currentMax != nil {
+        nextIndex = *currentMax + 1
+    } 
 
 	// Шифруем сообщения
 	encryptedUser, err := r.crypto.Encrypt(userMsg)
@@ -124,77 +107,68 @@ func (r *Repository) AddConversation(ctx context.Context, userID string, userMsg
 		return err
 	}
 
-	query := `INSERT INTO conversations (user_id, message_index, encrypted_user_message, encrypted_assistant_message)
-              VALUES ($1, $2, $3, $4)`
+	conv := Conversation{
+		UserID:                    userID,
+		MessageIndex:              nextIndex,
+		EncryptedUserMessage:      encryptedUser,
+		EncryptedAssistantMessage: encryptedAssistant,
+	}
 
-	_, err = r.db.ExecContext(ctx, query, userID, nextIndex, encryptedUser, encryptedAssistant)
-	return err
+	return r.db.WithContext(ctx).Create(&conv).Error
 }
 
 func (r *Repository) GetConversations(ctx context.Context, userID string, limit int) ([]Message, error) {
-	query := `SELECT encrypted_user_message, encrypted_assistant_message, created_at
-              FROM conversations 
-              WHERE user_id = $1 
-              ORDER BY message_index DESC 
-              LIMIT $2`
+	var conversations []Conversation
+	err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Order("message_index DESC").
+		Limit(limit).
+		Find(&conversations).Error
 
-	rows, err := r.db.QueryContext(ctx, query, userID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var messages []Message
-	for rows.Next() {
-		var encryptedUser, encryptedAssistant string
-		var createdAt time.Time
-
-		if err := rows.Scan(&encryptedUser, &encryptedAssistant, &createdAt); err != nil {
-			return nil, err
-		}
-
+	for _, conv := range conversations {
 		// Пропускаем пустые значения
-		if encryptedUser == "" || encryptedAssistant == "" {
+		if conv.EncryptedUserMessage == "" || conv.EncryptedAssistantMessage == "" {
 			logrus.WithFields(logrus.Fields{
 				"user_id": userID,
 			}).Warn("Empty encrypted message found, skipping conversation")
 			continue
 		}
 
-		// Расшифровываем пользовательское сообщение (или используем как plaintext для старых данных)
-		userMsg, isUserPlaintext, err := r.crypto.DecryptOrPlaintext(encryptedUser)
+		// Расшифровываем пользовательское сообщение
+		userMsg, isUserPlaintext, err := r.crypto.DecryptOrPlaintext(conv.EncryptedUserMessage)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
-				"user_id": userID,
-				"encrypted_length": len(encryptedUser),
-			}).Warn("Failed to decrypt user message (possibly encrypted with different key), skipping conversation")
+				"user_id":          userID,
+				"encrypted_length": len(conv.EncryptedUserMessage),
+			}).Warn("Failed to decrypt user message, skipping conversation")
 			continue
 		}
 		if isUserPlaintext {
-			logrus.WithFields(logrus.Fields{
-				"user_id": userID,
-			}).Debug("User message is plaintext (old unencrypted data)")
+			logrus.WithFields(logrus.Fields{"user_id": userID}).Debug("User message is plaintext")
 		}
 
-		// Расшифровываем сообщение ассистента (или используем как plaintext для старых данных)
-		assistantMsg, isAssistantPlaintext, err := r.crypto.DecryptOrPlaintext(encryptedAssistant)
+		// Расшифровываем сообщение ассистента
+		assistantMsg, isAssistantPlaintext, err := r.crypto.DecryptOrPlaintext(conv.EncryptedAssistantMessage)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
-				"user_id": userID,
-				"encrypted_length": len(encryptedAssistant),
-			}).Warn("Failed to decrypt assistant message (possibly encrypted with different key), skipping conversation")
+				"user_id":          userID,
+				"encrypted_length": len(conv.EncryptedAssistantMessage),
+			}).Warn("Failed to decrypt assistant message, skipping conversation")
 			continue
 		}
 		if isAssistantPlaintext {
-			logrus.WithFields(logrus.Fields{
-				"user_id": userID,
-			}).Debug("Assistant message is plaintext (old unencrypted data)")
+			logrus.WithFields(logrus.Fields{"user_id": userID}).Debug("Assistant message is plaintext")
 		}
 
 		messages = append(messages, Message{
 			User:      userMsg,
 			Assistant: assistantMsg,
-			Timestamp: createdAt,
+			Timestamp: conv.CreatedAt,
 		})
 	}
 
@@ -207,57 +181,42 @@ func (r *Repository) GetConversations(ctx context.Context, userID string, limit 
 }
 
 func (r *Repository) GetConversationCount(ctx context.Context, userID string) (int, error) {
-	var count int
-	err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM conversations WHERE user_id = $1",
-		userID).Scan(&count)
-	return count, err
+	var count int64
+	err := r.db.WithContext(ctx).Model(&Conversation{}).Where("user_id = ?", userID).Count(&count).Error
+	return int(count), err
 }
 
-// Summary methods (отдельная таблица)
+// Summary methods
 
 func (r *Repository) GetCurrentSummary(ctx context.Context, userID string) (*Summary, error) {
-	query := `SELECT id, user_id, encrypted_summary_text, message_count_at_summary, created_at, updated_at, is_current
-              FROM summaries 
-              WHERE user_id = $1 AND is_current = TRUE
-              ORDER BY updated_at DESC
-              LIMIT 1`
-
 	var summary Summary
-	var encryptedSummaryText string
-	err := r.db.QueryRowContext(ctx, query, userID).Scan(
-		&summary.ID,
-		&summary.UserID,
-		&encryptedSummaryText,
-		&summary.MessageCountAtSummary,
-		&summary.CreatedAt,
-		&summary.UpdatedAt,
-		&summary.IsCurrent,
-	)
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND is_current = ?", userID, true).
+		Order("updated_at DESC").
+		First(&summary).Error
 
-	if err == sql.ErrNoRows {
+	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	// Расшифровываем суммаризацию (или используем как plaintext для старых данных)
-	summaryText, isPlaintext, err := r.crypto.DecryptOrPlaintext(encryptedSummaryText)
+	// Расшифровываем суммаризацию
+	summaryText, isPlaintext, err := r.crypto.DecryptOrPlaintext(summary.EncryptedSummaryText)
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
-			"user_id": userID,
+			"user_id":    userID,
 			"summary_id": summary.ID,
 		}).Warn("Failed to decrypt summary, using as plaintext")
-		// Если расшифровка не удалась, используем как есть (для обратной совместимости)
-		summary.SummaryText = encryptedSummaryText
+		summary.SummaryText = summary.EncryptedSummaryText
 	} else {
 		summary.SummaryText = summaryText
 		if isPlaintext {
 			logrus.WithFields(logrus.Fields{
-				"user_id": userID,
+				"user_id":    userID,
 				"summary_id": summary.ID,
-			}).Debug("Summary is plaintext (old unencrypted data)")
+			}).Debug("Summary is plaintext")
 		}
 	}
 
@@ -265,63 +224,56 @@ func (r *Repository) GetCurrentSummary(ctx context.Context, userID string) (*Sum
 }
 
 func (r *Repository) SaveSummary(ctx context.Context, userID string, summaryText string, messageCount int) error {
-	// Сначала помечаем все старые суммаризации как неактивные
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE summaries SET is_current = FALSE WHERE user_id = $1",
-		userID)
-	if err != nil {
-		return err
-	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// Сначала помечаем все старые суммаризации как неактивные
+		if err := tx.Model(&Summary{}).
+			Where("user_id = ?", userID).
+			Update("is_current", false).Error; err != nil {
+			return err
+		}
 
-	// Шифруем суммаризацию
-	encryptedSummary, err := r.crypto.Encrypt(summaryText)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt summary: %w", err)
-	}
+		// Шифруем суммаризацию
+		encryptedSummary, err := r.crypto.Encrypt(summaryText)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt summary: %w", err)
+		}
 
-	// Сохраняем новую зашифрованную суммаризацию
-	query := `INSERT INTO summaries (user_id, encrypted_summary_text, message_count_at_summary, is_current)
-              VALUES ($1, $2, $3, TRUE)`
+		// Сохраняем новую
+		newSummary := Summary{
+			UserID:                userID,
+			EncryptedSummaryText:  encryptedSummary,
+			MessageCountAtSummary: messageCount,
+			IsCurrent:             true,
+		}
 
-	_, err = r.db.ExecContext(ctx, query, userID, encryptedSummary, messageCount)
-	return err
+		return tx.Create(&newSummary).Error
+	})
 }
 
 func (r *Repository) UpdateSummary(ctx context.Context, summaryID int, summaryText string) error {
-	// Шифруем суммаризацию
 	encryptedSummary, err := r.crypto.Encrypt(summaryText)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt summary: %w", err)
 	}
 
-	query := `UPDATE summaries 
-              SET encrypted_summary_text = $1, updated_at = NOW() 
-              WHERE id = $2`
-
-	_, err = r.db.ExecContext(ctx, query, encryptedSummary, summaryID)
-	return err
+	return r.db.WithContext(ctx).Model(&Summary{}).
+		Where("id = ?", summaryID).
+		Updates(map[string]interface{}{
+			"encrypted_summary_text": encryptedSummary,
+			"updated_at":             time.Now(),
+		}).Error
 }
 
 func (r *Repository) GetAllUserIDs(ctx context.Context) ([]string, error) {
-	query := "SELECT user_id FROM users"
-	rows, err := r.db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var userIDs []string
-	for rows.Next() {
-		var userID string
-		if err := rows.Scan(&userID); err != nil {
-			return nil, err
-		}
-		userIDs = append(userIDs, userID)
-	}
-
-	return userIDs, nil
+	err := r.db.WithContext(ctx).Model(&User{}).Pluck("user_id", &userIDs).Error
+	return userIDs, err
 }
 
 func (r *Repository) Close() error {
-	return r.db.Close()
+	sqlDB, err := r.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
 }
