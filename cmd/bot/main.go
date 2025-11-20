@@ -145,6 +145,7 @@ func setupBotCommands(tgClient *telegram.Client) error {
 	commands := []tgbotapi.BotCommand{
 		{Command: "start", Description: "Начать диалог"},
 		{Command: "help", Description: "Показать справку"},
+		{Command: "supervisor", Description: "Переключить режим супервизора"},
 	}
 
 	cmdConfig := tgbotapi.NewSetMyCommands(commands...)
