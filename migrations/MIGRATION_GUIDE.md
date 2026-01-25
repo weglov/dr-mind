@@ -143,3 +143,4 @@ psql -d dr_mind < backup_before_migration.sql
 3. Выполните проверочные запросы из шага 3
 
 
+

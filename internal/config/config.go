@@ -9,12 +9,13 @@ import (
 )
 
 type Config struct {
-	BotToken      string
-	ClaudeAPIKey  string
-	ClaudeModel   string
-	DatabaseURL   string
-	EncryptionKey string
-	OpenAIAPIKey  string
+	BotToken           string
+	ClaudeAPIKey       string
+	ClaudeModel        string
+	DatabaseURL        string
+	EncryptionKey      string
+	OpenRouterAPIKey   string
+	TranscriptionModel string
 }
 
 func Load() (*Config, error) {
@@ -57,16 +58,17 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 
-	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
-	// OpenAI API key не обязателен, но нужен для транскрибации голосовых сообщений
+	openRouterAPIKey := os.Getenv("OPENROUTER_API_KEY")
+	// OpenRouter API key не обязателен, но нужен для транскрибации голосовых сообщений
 
 	return &Config{
-		BotToken:      botToken,
-		ClaudeAPIKey:  claudeAPIKey,
-		ClaudeModel:   getEnv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
-		DatabaseURL:   databaseURL,
-		EncryptionKey: encryptionKey,
-		OpenAIAPIKey:  openAIAPIKey,
+		BotToken:           botToken,
+		ClaudeAPIKey:       claudeAPIKey,
+		ClaudeModel:        getEnv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
+		DatabaseURL:        databaseURL,
+		EncryptionKey:      encryptionKey,
+		OpenRouterAPIKey:   openRouterAPIKey,
+		TranscriptionModel: getEnv("TRANSCRIPTION_MODEL", "google/gemini-2.0-flash-001"),
 	}, nil
 }
 

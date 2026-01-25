@@ -12,16 +12,16 @@ import (
 )
 
 type AudioHandler struct {
-	tgClient     *telegram.Client
-	userService  *services.UserService
-	whisperService *services.WhisperService
+	tgClient             *telegram.Client
+	userService          *services.UserService
+	transcriptionService *services.TranscriptionService
 }
 
-func NewAudioHandler(tgClient *telegram.Client, userService *services.UserService, whisperService *services.WhisperService) *AudioHandler {
+func NewAudioHandler(tgClient *telegram.Client, userService *services.UserService, transcriptionService *services.TranscriptionService) *AudioHandler {
 	return &AudioHandler{
-		tgClient:      tgClient,
-		userService:   userService,
-		whisperService: whisperService,
+		tgClient:             tgClient,
+		userService:          userService,
+		transcriptionService: transcriptionService,
 	}
 }
 
@@ -95,12 +95,12 @@ func (h *AudioHandler) HandleAudioMessage(ctx context.Context, update tgbotapi.U
 	outFile.Close()
 
 	// Транскрибируем аудио в текст
-	if h.whisperService == nil {
+	if h.transcriptionService == nil {
 		reply := "Извините, обработка голосовых сообщений недоступна. Пожалуйста, отправьте ваше сообщение текстом."
 		return h.tgClient.SendMessagePlain(chatID, reply)
 	}
 
-	transcribedText, err := h.whisperService.Transcribe(ctx, localFilePath)
+	transcribedText, err := h.transcriptionService.Transcribe(ctx, localFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to transcribe audio: %w", err)
 	}
