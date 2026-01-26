@@ -68,7 +68,7 @@ func Load() (*Config, error) {
 		DatabaseURL:        databaseURL,
 		EncryptionKey:      encryptionKey,
 		OpenRouterAPIKey:   openRouterAPIKey,
-		TranscriptionModel: getEnv("TRANSCRIPTION_MODEL", "google/gemini-2.0-flash-001"),
+		TranscriptionModel: getEnv("TRANSCRIPTION_MODEL", "openai/gpt-4o-audio-preview"),
 	}, nil
 }
 
