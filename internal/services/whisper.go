@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 type TranscriptionService struct {
@@ -83,6 +85,13 @@ func (s *TranscriptionService) Transcribe(ctx context.Context, audioFilePath str
 	ext := strings.TrimPrefix(filepath.Ext(audioFilePath), ".")
 	format := mapAudioFormat(ext)
 
+	logrus.WithFields(logrus.Fields{
+		"model":     s.model,
+		"format":    format,
+		"file_size": len(audioData),
+		"file_path": audioFilePath,
+	}).Info("Transcribing audio")
+
 	// Формируем запрос
 	reqBody := openRouterRequest{
 		Model: s.model,
@@ -133,8 +142,14 @@ func (s *TranscriptionService) Transcribe(ctx context.Context, audioFilePath str
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		logrus.WithFields(logrus.Fields{
+			"status": resp.StatusCode,
+			"body":   string(body),
+		}).Error("OpenRouter API error")
 		return "", fmt.Errorf("OpenRouter API error: %d - %s", resp.StatusCode, string(body))
 	}
+
+	logrus.WithField("response", string(body)).Debug("OpenRouter response")
 
 	// Парсим ответ
 	var openRouterResp openRouterResponse
