@@ -177,7 +177,7 @@ func (s *TranscriptionService) Transcribe(ctx context.Context, audioFilePath str
 func mapAudioFormat(ext string) string {
 	switch strings.ToLower(ext) {
 	case "ogg", "oga":
-		return "ogg"
+		return "opus" // Telegram voice messages use opus codec in ogg container
 	case "mp3":
 		return "mp3"
 	case "wav":
