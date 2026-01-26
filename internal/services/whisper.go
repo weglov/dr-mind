@@ -96,7 +96,7 @@ func (s *TranscriptionService) Transcribe(ctx context.Context, audioFilePath str
 	// Формируем запрос
 	reqBody := openRouterRequest{
 		Model:      s.model,
-		Modalities: []string{"text", "audio"},
+		Modalities: []string{"text"},
 		Messages: []openRouterMsg{
 			{
 				Role: "user",
