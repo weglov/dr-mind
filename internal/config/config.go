@@ -68,7 +68,7 @@ func Load() (*Config, error) {
 		DatabaseURL:        databaseURL,
 		EncryptionKey:      encryptionKey,
 		OpenRouterAPIKey:   openRouterAPIKey,
-		TranscriptionModel: getEnv("TRANSCRIPTION_MODEL", "google/gemini-2.5-flash"),
+		TranscriptionModel: getEnv("TRANSCRIPTION_MODEL", "google/gemini-3-flash-preview"),
 	}, nil
 }
 
