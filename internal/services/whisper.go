@@ -23,28 +23,6 @@ type TranscriptionService struct {
 	apiURL string
 }
 
-type openRouterRequest struct {
-	Model      string          `json:"model"`
-	Messages   []openRouterMsg `json:"messages"`
-	Modalities []string        `json:"modalities,omitempty"`
-}
-
-type openRouterMsg struct {
-	Role    string        `json:"role"`
-	Content []contentPart `json:"content"`
-}
-
-type contentPart struct {
-	Type       string      `json:"type"`
-	Text       string      `json:"text,omitempty"`
-	InputAudio *inputAudio `json:"input_audio,omitempty"`
-}
-
-type inputAudio struct {
-	Data   string `json:"data"`
-	Format string `json:"format"`
-}
-
 type openRouterResponse struct {
 	Choices []struct {
 		Message struct {
@@ -82,35 +60,34 @@ func (s *TranscriptionService) Transcribe(ctx context.Context, audioFilePath str
 	// Кодируем в base64
 	base64Audio := base64.StdEncoding.EncodeToString(audioData)
 
-	// Определяем формат по расширению
+	// Определяем MIME тип по расширению
 	ext := strings.TrimPrefix(filepath.Ext(audioFilePath), ".")
-	format := mapAudioFormat(ext)
+	mimeType := mapAudioMimeType(ext)
 
 	logrus.WithFields(logrus.Fields{
 		"model":     s.model,
-		"format":    format,
+		"mime_type": mimeType,
 		"file_size": len(audioData),
 		"file_path": audioFilePath,
 	}).Info("Transcribing audio")
 
-	// Формируем запрос
-	reqBody := openRouterRequest{
-		Model:      s.model,
-		Modalities: []string{"text"},
-		Messages: []openRouterMsg{
+	// Формируем запрос в формате Gemini (inline_data)
+	reqBody := map[string]interface{}{
+		"model": s.model,
+		"messages": []map[string]interface{}{
 			{
-				Role: "user",
-				Content: []contentPart{
+				"role": "user",
+				"content": []map[string]interface{}{
 					{
-						Type: "input_audio",
-						InputAudio: &inputAudio{
-							Data:   base64Audio,
-							Format: format,
-						},
+						"type": "text",
+						"text": "Прослушай аудио и напиши только слова, которые произнёс человек. Ничего больше - только транскрипцию речи.",
 					},
 					{
-						Type: "text",
-						Text: "Что говорит человек в этом аудио? Напиши только его слова, ничего больше.",
+						"type": "file",
+						"file": map[string]string{
+							"filename":   filepath.Base(audioFilePath),
+							"file_data":  "data:" + mimeType + ";base64," + base64Audio,
+						},
 					},
 				},
 			},
@@ -173,24 +150,26 @@ func (s *TranscriptionService) Transcribe(ctx context.Context, audioFilePath str
 	return transcribedText, nil
 }
 
-// mapAudioFormat преобразует расширение файла в формат для OpenRouter
-func mapAudioFormat(ext string) string {
+// mapAudioMimeType преобразует расширение файла в MIME тип
+func mapAudioMimeType(ext string) string {
 	switch strings.ToLower(ext) {
 	case "ogg", "oga":
-		return "opus" // Telegram voice messages use opus codec in ogg container
+		return "audio/ogg"
 	case "mp3":
-		return "mp3"
+		return "audio/mp3"
 	case "wav":
-		return "wav"
+		return "audio/wav"
 	case "m4a":
-		return "m4a"
+		return "audio/m4a"
 	case "aac":
-		return "aac"
+		return "audio/aac"
 	case "flac":
-		return "flac"
+		return "audio/flac"
 	case "mp4":
-		return "m4a" // video notes в telegram - mp4, но аудио обычно m4a
+		return "audio/mp4"
+	case "webm":
+		return "audio/webm"
 	default:
-		return "ogg" // default для voice messages в Telegram
+		return "audio/ogg"
 	}
 }
