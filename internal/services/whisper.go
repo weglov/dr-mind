@@ -91,15 +91,15 @@ func (s *TranscriptionService) Transcribe(ctx context.Context, audioFilePath str
 				Role: "user",
 				Content: []contentPart{
 					{
-						Type: "text",
-						Text: "Transcribe the following audio file. Return ONLY the transcribed text, nothing else. No explanations, no formatting, just the exact words spoken in the audio.",
-					},
-					{
 						Type: "input_audio",
 						InputAudio: &inputAudio{
 							Data:   base64Audio,
 							Format: format,
 						},
+					},
+					{
+						Type: "text",
+						Text: "Что говорит человек в этом аудио? Напиши только его слова, ничего больше.",
 					},
 				},
 			},
