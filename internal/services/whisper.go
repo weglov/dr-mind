@@ -24,8 +24,9 @@ type TranscriptionService struct {
 }
 
 type openRouterRequest struct {
-	Model    string          `json:"model"`
-	Messages []openRouterMsg `json:"messages"`
+	Model      string          `json:"model"`
+	Messages   []openRouterMsg `json:"messages"`
+	Modalities []string        `json:"modalities,omitempty"`
 }
 
 type openRouterMsg struct {
@@ -94,7 +95,8 @@ func (s *TranscriptionService) Transcribe(ctx context.Context, audioFilePath str
 
 	// Формируем запрос
 	reqBody := openRouterRequest{
-		Model: s.model,
+		Model:      s.model,
+		Modalities: []string{"text", "audio"},
 		Messages: []openRouterMsg{
 			{
 				Role: "user",
