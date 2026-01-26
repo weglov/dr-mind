@@ -165,7 +165,10 @@ func (s *TranscriptionService) Transcribe(ctx context.Context, audioFilePath str
 		return "", fmt.Errorf("no transcription in response")
 	}
 
-	return strings.TrimSpace(openRouterResp.Choices[0].Message.Content), nil
+	transcribedText := strings.TrimSpace(openRouterResp.Choices[0].Message.Content)
+	logrus.WithField("transcribed_text", transcribedText).Info("Transcription result")
+
+	return transcribedText, nil
 }
 
 // mapAudioFormat преобразует расширение файла в формат для OpenRouter
