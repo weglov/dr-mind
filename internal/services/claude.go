@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 type Message struct {
@@ -101,11 +99,6 @@ func (s *ClaudeService) GenerateResponse(ctx context.Context, messages []Message
 }
 
 func (s *ClaudeService) CheckRelevance(ctx context.Context, message string, context string) (bool, string, error) {
-	logrus.WithFields(logrus.Fields{
-		"message": message,
-		"context": context,
-	}).Info("CheckRelevance input")
-
 	var prompt string
 	if context != "" {
 		prompt = fmt.Sprintf(`Контекст предыдущего диалога:
@@ -130,13 +123,8 @@ func (s *ClaudeService) CheckRelevance(ctx context.Context, message string, cont
 	}, "Ты эксперт по определению психологических запросов. Твоя задача - определить, является ли запрос пользователя связанным с психологической помощью, психотерапией, ментальным здоровьем или личностным развитием. Учитывай контекст предыдущего диалога, если он есть, если пользователь благодарит или его сообщение связанно с предыдущим контекстом то отвечай yes")
 
 	if err != nil {
-		logrus.WithError(err).Error("CheckRelevance failed")
 		return false, "", err
 	}
-
-	logrus.WithFields(logrus.Fields{
-		"response": response,
-	}).Info("CheckRelevance response")
 
 	cleanedResponse := strings.TrimSpace(strings.ToLower(response))
 	cleanedResponse = strings.Trim(cleanedResponse, "*")

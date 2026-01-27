@@ -2,15 +2,15 @@ package handlers
 
 import (
 	"context"
-	"dr_mind/internal/services"
-	"dr_mind/pkg/telegram"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 
+	"dr_mind/internal/services"
+	"dr_mind/pkg/telegram"
+
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/sirupsen/logrus"
 )
 
 type AudioHandler struct {
@@ -65,19 +65,11 @@ func (h *AudioHandler) HandleAudioMessage(ctx context.Context, update tgbotapi.U
 		return fmt.Errorf("unsupported audio type")
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"file_id":   fileID,
-		"user_id":   userID,
-		"file_path": localFilePath,
-	}).Info("Downloading audio file")
-
 	// Скачиваем файл
 	file, err := h.tgClient.Bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
 	if err != nil {
 		return fmt.Errorf("failed to get file: %w", err)
 	}
-
-	logrus.WithField("telegram_file_path", file.FilePath).Info("Got file info from Telegram")
 
 	// Скачиваем файл локально через HTTP
 	fileURL := file.Link(h.tgClient.Bot.Token)
@@ -96,12 +88,10 @@ func (h *AudioHandler) HandleAudioMessage(ctx context.Context, update tgbotapi.U
 	defer outFile.Close()
 	defer os.Remove(localFilePath) // Удаляем после использования
 
-	written, err := io.Copy(outFile, resp.Body)
+	_, err = io.Copy(outFile, resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to save file: %w", err)
 	}
-
-	logrus.WithField("bytes_written", written).Info("Audio file saved")
 
 	// Закрываем файл перед транскрибацией
 	outFile.Close()
